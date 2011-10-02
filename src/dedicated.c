@@ -46,6 +46,7 @@ int main(int argc, char **argv)
     net_bind(ip, port);
 
     FD_ZERO(&rfds);
+    FD_SET(s, &rfds);
     memset(&tv, 0, sizeof(tv));
     memset(&peer_last_packet, 0, sizeof(peer_last_packet));
 
