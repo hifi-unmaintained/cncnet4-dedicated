@@ -33,6 +33,7 @@ uint8_t maxclients = 8;
 
 uint8_t clients = 0;
 time_t peer_last_packet[MAX_PEERS];
+#define STAT_INTERVAL 5
 
 void ann_main(const char *url);
 
@@ -43,6 +44,16 @@ int main(int argc, char **argv)
     struct timeval tv;
     struct sockaddr_in peer;
     char buf[NET_BUF_SIZE];
+    char status[256] = { 0 };
+
+    uint32_t last_packets = 0;
+    uint32_t last_bytes = 0;
+    uint32_t last_time = 0;
+
+    uint32_t total_packets = 0;
+    uint32_t total_bytes = 0;
+    uint32_t bps = 0;
+    uint32_t pps = 0;
 
     int opt;
     while ((opt = getopt(argc, argv, "?hi:n:p:t:c:")) != -1)
@@ -111,6 +122,7 @@ int main(int argc, char **argv)
     printf("   password: %s\n", strlen(password) > 0 ? password : "<no password>");
     printf("    timeout: %d seconds\n", timeout);
     printf(" maxclients: %d\n", maxclients);
+    printf("\n");
 
     net_bind(ip, port);
 
@@ -123,10 +135,20 @@ int main(int argc, char **argv)
     {
         time_t now = time(NULL);
 
+        /* clear old status line */
+        printf("\r");
+        for (i=0;i<strlen(status);i++)
+            printf(" ");
+        printf("\r");
+        fflush(NULL);
+
         if (FD_ISSET(s, &rfds))
         {
             size_t len = net_recv(&peer);
             uint8_t cmd, peer_id;
+
+            total_packets++;
+            total_bytes += len;
 
             if (len == 0)
             {
@@ -264,6 +286,22 @@ next:
         FD_SET(s, &rfds);
         tv.tv_sec = 1;
         tv.tv_usec = 0;
+
+        if (now >= last_time + STAT_INTERVAL)
+        {
+            int stat_elapsed = now - last_time ;
+            pps = (total_packets - last_packets) / stat_elapsed;
+            bps = (total_bytes - last_bytes) / stat_elapsed;
+            last_packets = total_packets;
+            last_bytes = total_bytes;
+            last_time = now;
+        }
+
+        sprintf(status, "%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
+                hostname, clients, maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
+
+        printf("%s", status);
+        fflush(NULL);
     }
 
     net_free();
