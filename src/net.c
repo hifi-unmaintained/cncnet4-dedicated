@@ -266,7 +266,7 @@ uint8_t net_peer_add(struct sockaddr_in *peer)
 
 struct sockaddr_in *net_peer_get(uint8_t index)
 {
-    if (index < 0 || index > MAX_PEERS-1)
+    if (index > MAX_PEERS-1)
     {
         return NULL;
     }
