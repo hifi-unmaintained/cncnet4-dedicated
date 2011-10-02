@@ -19,13 +19,17 @@
 #include <time.h>
 #include "net.h"
 
+/* mingw supports it and I really want getopt(3) */
+#include <unistd.h>
+#include <stdlib.h>
+
 /* configurable trough parameters */
 int port = 9000;
 char ip[32] = { "0.0.0.0" };
-char hostname[128] = { "Unnamed CnCNet Dedicated Server" };
+char hostname[256] = { "Unnamed CnCNet Dedicated Server" };
 char password[32] = { "" };
 uint32_t timeout = 60;
-uint8_t maxclients = MAX_PEERS;
+uint8_t maxclients = 8;
 
 uint8_t clients = 0;
 time_t peer_last_packet[MAX_PEERS];
@@ -40,9 +44,74 @@ int main(int argc, char **argv)
     struct sockaddr_in peer;
     char buf[NET_BUF_SIZE];
 
+    int opt;
+    while ((opt = getopt(argc, argv, "?hi:n:p:t:c:")) != -1)
+    {
+        switch (opt)
+        {
+            case 'i':
+                strncpy(ip, optarg, sizeof(ip)-1);
+                break;
+            case 'n':
+                strncpy(hostname, optarg, sizeof(hostname)-1);
+                break;
+            case 'p':
+                strncpy(password, optarg, sizeof(password)-1);
+                break;
+            case 't':
+                timeout = atoi(optarg);
+                if (timeout < 1)
+                {
+                    timeout = 1;
+                }
+                else if (timeout > 3600)
+                {
+                    timeout = 3600;
+                }
+                break;
+            case 'c':
+                maxclients = atoi(optarg);
+                if (maxclients < 2)
+                {
+                    maxclients = 2;
+                }
+                else if (maxclients > MAX_PEERS)
+                {
+                    maxclients = MAX_PEERS;
+                }
+                break;
+            case 'h':
+            case '?':
+            default:
+                fprintf(stderr, "Usage: %s [-h?] [-i ip] [-n hostname] [-p password] [-t timeout] [-c maxclients] [port]\n", argv[0]);
+                return 1;
+        }
+    }
+
+    if (optind < argc)
+    {
+        port = atoi(argv[optind]);
+        if (port < 1024)
+        {
+            port = 1024;
+        }
+        else if (port > 65535)
+        {
+            port = 65535;
+        }
+    }
+
     s = net_init();
 
-    printf("CnCNet: Binding to %s:%d\n", ip, port);
+    printf("CnCNet Dedicated Server\n");
+    printf("=======================\n");
+    printf("         ip: %s\n", ip);
+    printf("       port: %d\n", port);
+    printf("   hostname: %s\n", hostname);
+    printf("   password: %s\n", strlen(password) > 0 ? password : "<no password>");
+    printf("    timeout: %d seconds\n", timeout);
+    printf(" maxclients: %d\n", maxclients);
+
     net_bind(ip, port);
 
     FD_ZERO(&rfds);
