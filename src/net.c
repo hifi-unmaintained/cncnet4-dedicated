@@ -15,6 +15,7 @@
  */
 
 #include "net.h"
+#include "log.h"
 #include <stdio.h>
 #include <assert.h>
 #include <errno.h>
@@ -255,7 +256,7 @@ uint8_t net_peer_add(struct sockaddr_in *peer)
     {
         if (net_peers[i].sin_family == 0)
         {
-            printf("Client %s:%d connected as %d\n", inet_ntoa(peer->sin_addr), ntohs(peer->sin_port), i);
+            log_printf("Client %s:%d connected as %d\n", inet_ntoa(peer->sin_addr), ntohs(peer->sin_port), i);
             memcpy(&net_peers[i], peer, sizeof(struct sockaddr_in));
             return i;
         }
@@ -276,7 +277,7 @@ struct sockaddr_in *net_peer_get(uint8_t index)
 
 void net_peer_remove(uint8_t index)
 {
-    printf("Client %s:%d disconnected\n", inet_ntoa(net_peers[index].sin_addr), ntohs(net_peers[index].sin_port));
+    log_printf("Client %s:%d disconnected\n", inet_ntoa(net_peers[index].sin_addr), ntohs(net_peers[index].sin_port));
     memset(&net_peers[index], 0, sizeof(net_peers[index]));
 }
 

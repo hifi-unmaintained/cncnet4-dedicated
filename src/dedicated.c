@@ -17,7 +17,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
 #include "net.h"
+#include "log.h"
 
 /* mingw supports it and I really want getopt(3) */
 #include <unistd.h>
@@ -34,9 +36,22 @@ uint8_t maxclients = 8;
 uint8_t clients = 0;
 time_t peer_last_packet[MAX_PEERS];
 int32_t peer_whitelist[MAX_PEERS];
-#define STAT_INTERVAL 5
 
 void ann_main(const char *url);
+
+int interrupt = 0;
+void onsigint(int signum)
+{
+    log_status_clear();
+    printf("Received ^C, exiting...");
+    interrupt = 1;
+}
+void onsigterm(int signum)
+{
+    log_status_clear();
+    printf("Received SIGTERM, exiting...");
+    interrupt = 1;
+}
 
 int main(int argc, char **argv)
 {
@@ -45,7 +60,6 @@ int main(int argc, char **argv)
     struct timeval tv;
     struct sockaddr_in peer;
     char buf[NET_BUF_SIZE];
-    char status[256] = { 0 };
 
     uint32_t last_packets = 0;
     uint32_t last_bytes = 0;
@@ -133,15 +147,12 @@ int main(int argc, char **argv)
     memset(&peer_last_packet, 0, sizeof(peer_last_packet));
     memset(&peer_whitelist, 0, sizeof(peer_whitelist));
 
-    while (select(s + 1, &rfds, NULL, NULL, &tv) > -1)
+    signal(SIGINT, onsigint);
+    signal(SIGTERM, onsigterm);
+
+    while (select(s + 1, &rfds, NULL, NULL, &tv) > -1 && !interrupt)
     {
         time_t now = time(NULL);
-
-        /* clear old status line */
-        printf("\r");
-        for (i=0;i<strlen(status);i++)
-            printf(" ");
-        printf("\r");
 
         if (FD_ISSET(s, &rfds))
         {
@@ -192,13 +203,13 @@ int main(int argc, char **argv)
                         memset(peer_last_packet, 0, sizeof(peer_last_packet));
                         memset(&peer_whitelist, 0, sizeof(peer_whitelist));
 
-                        printf("Got %d ips trough CTL_RESET\n", net_read_size() / 4);
+                        log_printf("Got %d ips trough CTL_RESET\n", net_read_size() / 4);
 
                         i = 0;
                         while (net_read_size() >= 4)
                         {
                             peer_whitelist[i] = net_read_int32();
-                            printf(" %s\n", inet_ntoa(*(struct in_addr *)&peer_whitelist[i]));
+                            log_printf(" %s\n", inet_ntoa(*(struct in_addr *)&peer_whitelist[i]));
                             i++;
                         }
 
@@ -206,7 +217,7 @@ int main(int argc, char **argv)
                     }
                     else
                     {
-                        printf("CTL_RESET with invalid password\n");
+                        log_printf("CTL_RESET with invalid password\n");
                         net_write_int8(0);
                     }
 
@@ -297,7 +308,7 @@ next:
         tv.tv_sec = 1;
         tv.tv_usec = 0;
 
-        if (now >= last_time + STAT_INTERVAL)
+        if (now > last_time && !interrupt)
         {
             int stat_elapsed = now - last_time ;
             pps = (total_packets - last_packets) / stat_elapsed;
@@ -305,14 +316,13 @@ next:
             last_packets = total_packets;
             last_bytes = total_bytes;
             last_time = now;
-        }
 
-        snprintf(status, sizeof(status)-1, "%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
+            log_statusf("%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
                 hostname, clients, maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
-
-        printf("%s", status);
-        fflush(stdout);
+        }
     }
+
+    printf("\n");
 
     net_free();
     return 0;
