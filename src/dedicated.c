@@ -142,7 +142,6 @@ int main(int argc, char **argv)
         for (i=0;i<strlen(status);i++)
             printf(" ");
         printf("\r");
-        fflush(NULL);
 
         if (FD_ISSET(s, &rfds))
         {
@@ -312,7 +311,7 @@ next:
                 hostname, clients, maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
 
         printf("%s", status);
-        fflush(NULL);
+        fflush(stdout);
     }
 
     net_free();
