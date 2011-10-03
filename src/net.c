@@ -207,7 +207,7 @@ int net_write_string(char *str)
 
 int net_recv(struct sockaddr_in *src)
 {
-    size_t l = sizeof(struct sockaddr_in);
+    socklen_t l = sizeof(struct sockaddr_in);
     net_ipos = 0;
     net_ilen = recvfrom(net_socket, net_ibuf, NET_BUF_SIZE, 0, (struct sockaddr *)src, &l);
     return net_ilen;
@@ -255,7 +255,7 @@ uint8_t net_peer_add(struct sockaddr_in *peer)
     {
         if (net_peers[i].sin_family == 0)
         {
-            printf("CnCNet: Client %s:%d connected as %d\n", inet_ntoa(peer->sin_addr), ntohs(peer->sin_port), i);
+            printf("Client %s:%d connected as %d\n", inet_ntoa(peer->sin_addr), ntohs(peer->sin_port), i);
             memcpy(&net_peers[i], peer, sizeof(struct sockaddr_in));
             return i;
         }
@@ -276,7 +276,7 @@ struct sockaddr_in *net_peer_get(uint8_t index)
 
 void net_peer_remove(uint8_t index)
 {
-    printf("CnCNet: Client %s:%d disconnected\n", inet_ntoa(net_peers[index].sin_addr), ntohs(net_peers[index].sin_port));
+    printf("Client %s:%d disconnected\n", inet_ntoa(net_peers[index].sin_addr), ntohs(net_peers[index].sin_port));
     memset(&net_peers[index], 0, sizeof(net_peers[index]));
 }
 
@@ -311,7 +311,7 @@ uint8_t net_peer_count()
 
 void net_peer_reset()
 {
-    printf("CnCNet: Peers reseted\n");
+    printf("Peers reseted\n");
     memset(net_peers, 0, sizeof(net_peers));
 }
 

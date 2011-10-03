@@ -192,7 +192,7 @@ int main(int argc, char **argv)
                         memset(peer_last_packet, 0, sizeof(peer_last_packet));
                         memset(&peer_whitelist, 0, sizeof(peer_whitelist));
 
-                        printf("CnCNet: Got %d ips trough CTL_RESET\n", net_read_size() / 4);
+                        printf("Got %d ips trough CTL_RESET\n", net_read_size() / 4);
 
                         i = 0;
                         while (net_read_size() >= 4)
@@ -206,7 +206,7 @@ int main(int argc, char **argv)
                     }
                     else
                     {
-                        printf("CnCNet: CTL_RESET with invalid password\n");
+                        printf("CTL_RESET with invalid password\n");
                         net_write_int8(0);
                     }
 
@@ -307,7 +307,7 @@ next:
             last_time = now;
         }
 
-        sprintf(status, "%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
+        snprintf(status, sizeof(status)-1, "%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
                 hostname, clients, maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
 
         printf("%s", status);

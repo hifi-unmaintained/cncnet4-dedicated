@@ -18,6 +18,7 @@
     #include <winsock.h>
     #include <winsock2.h>
     #include <wsipx.h>
+    typedef int socklen_t;
 #else
     #include <sys/types.h>
     #include <sys/socket.h>
