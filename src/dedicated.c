@@ -33,6 +33,7 @@ uint8_t maxclients = 8;
 
 uint8_t clients = 0;
 time_t peer_last_packet[MAX_PEERS];
+int32_t peer_whitelist[MAX_PEERS];
 #define STAT_INTERVAL 5
 
 void ann_main(const char *url);
@@ -130,6 +131,7 @@ int main(int argc, char **argv)
     FD_SET(s, &rfds);
     memset(&tv, 0, sizeof(tv));
     memset(&peer_last_packet, 0, sizeof(peer_last_packet));
+    memset(&peer_whitelist, 0, sizeof(peer_whitelist));
 
     while (select(s + 1, &rfds, NULL, NULL, &tv) > -1)
     {
@@ -187,18 +189,18 @@ int main(int argc, char **argv)
                     /* validate control password */
                     if (strlen(password) != 0 && strcmp(buf, password) == 0)
                     {
-                        struct sockaddr_in peer;
-                        peer.sin_family = AF_INET;
                         net_peer_reset();
                         memset(peer_last_packet, 0, sizeof(peer_last_packet));
+                        memset(&peer_whitelist, 0, sizeof(peer_whitelist));
 
-                        printf("CnCNet: Got %d peers trough CTL_RESET\n", net_read_size() / 6);
+                        printf("CnCNet: Got %d ips trough CTL_RESET\n", net_read_size() / 4);
 
-                        while (net_read_size() >= 6)
+                        i = 0;
+                        while (net_read_size() >= 4)
                         {
-                            peer.sin_addr.s_addr = net_read_int32();
-                            peer.sin_port = net_read_int16();
-                            net_peer_add(&peer);
+                            peer_whitelist[i] = net_read_int32();
+                            printf(" %s\n", inet_ntoa(*(struct in_addr *)&peer_whitelist[i]));
+                            i++;
                         }
 
                         net_write_int8(1);
@@ -214,14 +216,11 @@ int main(int argc, char **argv)
                 else if (ctl == CTL_DISCONNECT)
                 {
                     /* special packet from clients who are closing the socket so we can remove them from the active list before timeout */
-                    if (strlen(password) == 0)
+                    peer_id = net_peer_get_by_addr(&peer);
+                    if (peer_id != UINT8_MAX)
                     {
-                        peer_id = net_peer_get_by_addr(&peer);
-                        if (peer_id != UINT8_MAX)
-                        {
-                            net_peer_remove(peer_id);
-                            peer_last_packet[peer_id] = 0;
-                        }
+                        net_peer_remove(peer_id);
+                        peer_last_packet[peer_id] = 0;
                     }
                 }
 
@@ -229,11 +228,23 @@ int main(int argc, char **argv)
             }
 
             peer_id = net_peer_get_by_addr(&peer);
-            if (peer_id == UINT8_MAX)
+            if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
             {
-                if (strlen(password) == 0 && net_peer_count() < maxclients)
+                if (strlen(password) == 0)
                 {
                     peer_id = net_peer_add(&peer);
+                }
+                else
+                {
+                    /* allow only whitelisted ips */
+                    for (i = 0; i < MAX_PEERS; i++)
+                    {
+                        if (peer_whitelist[i] == peer.sin_addr.s_addr)
+                        {
+                            peer_id = net_peer_add(&peer);
+                            break;
+                        }
+                    }
                 }
             }
 
