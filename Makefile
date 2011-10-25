@@ -1,5 +1,6 @@
 CC=gcc
-CFLAGS=-O2 -g -Wall
+REV=$(shell sh -c 'git rev-parse --short @{0}')
+CFLAGS=-O2 -g -Wall -DVERSION=\"git~$(REV)\"
 
 all: dedicated
 

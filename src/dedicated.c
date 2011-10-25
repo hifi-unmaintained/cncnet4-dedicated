@@ -189,6 +189,7 @@ int main(int argc, char **argv)
                     net_write_string(hostname);
                     net_write_int8(clients);
                     net_write_int8(maxclients);
+                    net_write_string(VERSION);
                     net_send(&peer);
                 }
                 else if (ctl == CTL_RESET)
