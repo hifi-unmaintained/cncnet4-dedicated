@@ -69,6 +69,7 @@ int net_read_string(char *str, size_t len);
 int net_write_int8(int8_t);
 int net_write_data(void *, size_t);
 int net_write_string(char *str);
+int net_write_string_int32(int32_t);
 
 int net_recv(struct sockaddr_in *);
 int net_send(struct sockaddr_in *);

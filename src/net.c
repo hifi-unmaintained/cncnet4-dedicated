@@ -206,6 +206,13 @@ int net_write_string(char *str)
     return 1;
 }
 
+int net_write_string_int32(int32_t d)
+{
+    char str[32];
+    snprintf(str, sizeof(str), "%d", d);
+    return net_write_string(str);
+}
+
 int net_recv(struct sockaddr_in *src)
 {
     socklen_t l = sizeof(struct sockaddr_in);

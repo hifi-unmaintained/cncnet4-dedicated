@@ -185,10 +185,15 @@ int main(int argc, char **argv)
                 else if (ctl == CTL_QUERY)
                 {
                     /* query responds with the basic server information to display on a server browser */
-                    net_write_int8(strlen(password) > 0);
+                    net_write_string("hostname");
                     net_write_string(hostname);
-                    net_write_int8(clients);
-                    net_write_int8(maxclients);
+                    net_write_string("password");
+                    net_write_string_int32(strlen(password) > 0);
+                    net_write_string("clients");
+                    net_write_string_int32(clients);
+                    net_write_string("maxclients");
+                    net_write_string_int32(maxclients);
+                    net_write_string("version");
                     net_write_string(VERSION);
                     net_send(&peer);
                 }
