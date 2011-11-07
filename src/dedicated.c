@@ -322,7 +322,7 @@ int main(int argc, char **argv)
                 }
                 else if (buf[4] == 0x36 && buf[5] == 0x12)
                 {
-                    *net_peer_data(peer_id) = GAME_TS;
+                    *net_peer_data(peer_id) = GAME_RA2;
                 }
                 else
                 {
