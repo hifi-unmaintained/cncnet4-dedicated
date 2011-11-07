@@ -84,6 +84,7 @@ void net_peer_reset();
 uint8_t net_peer_get_by_addr(struct sockaddr_in *peer);
 uint8_t net_peer_add(struct sockaddr_in *peer);
 struct sockaddr_in *net_peer_get(uint8_t index);
+intptr_t *net_peer_data(uint8_t index);
 
 extern int net_socket;
 extern int net_open;

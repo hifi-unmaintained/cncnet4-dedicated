@@ -25,6 +25,16 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+enum
+{
+    GAME_UNKNOWN,
+    GAME_CNC95,
+    GAME_RA95,
+    GAME_TS,
+    GAME_RA2,
+    GAME_LAST
+};
+
 /* configurable trough parameters */
 int port = 9000;
 char ip[32] = { "0.0.0.0" };
@@ -185,6 +195,15 @@ int main(int argc, char **argv)
                 else if (ctl == CTL_QUERY)
                 {
                     /* query responds with the basic server information to display on a server browser */
+                    int i, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
+                    for (i = 0; i < MAX_PEERS; i++)
+                    {
+                        if (peer_last_packet[i])
+                        {
+                            cnt[*net_peer_data(i)]++;
+                        }
+                    }
+
                     net_write_string("hostname");
                     net_write_string(hostname);
                     net_write_string("password");
@@ -195,6 +214,17 @@ int main(int argc, char **argv)
                     net_write_string_int32(maxclients);
                     net_write_string("version");
                     net_write_string(VERSION);
+                    net_write_string("unk");
+                    net_write_string_int32(cnt[GAME_UNKNOWN]);
+                    net_write_string("cnc95");
+                    net_write_string_int32(cnt[GAME_CNC95]);
+                    net_write_string("ra95");
+                    net_write_string_int32(cnt[GAME_RA95]);
+                    net_write_string("ts");
+                    net_write_string_int32(cnt[GAME_TS]);
+                    net_write_string("ra2");
+                    net_write_string_int32(cnt[GAME_RA2]);
+
                     net_send(&peer);
                 }
                 else if (ctl == CTL_RESET)
@@ -277,6 +307,28 @@ int main(int argc, char **argv)
 
             if (cmd == CMD_BROADCAST)
             {
+                /* try to detect any supported game */
+                if (buf[0] == 0x34 && buf[1] == 0x12)
+                {
+                    *net_peer_data(peer_id) = GAME_CNC95;
+                }
+                else if (buf[0] == 0x35 && buf[1] == 0x12)
+                {
+                    *net_peer_data(peer_id) = GAME_RA95;
+                }
+                else if (buf[4] == 0x35 && buf[5] == 0x12)
+                {
+                    *net_peer_data(peer_id) = GAME_TS;
+                }
+                else if (buf[4] == 0x36 && buf[5] == 0x12)
+                {
+                    *net_peer_data(peer_id) = GAME_TS;
+                }
+                else
+                {
+                    *net_peer_data(peer_id) = GAME_UNKNOWN;
+                }
+
                 net_broadcast(peer_id);
             }
             else if (cmd != peer_id)

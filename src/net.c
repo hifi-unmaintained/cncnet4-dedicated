@@ -317,6 +317,12 @@ uint8_t net_peer_count()
     return count;
 }
 
+intptr_t *net_peer_data(uint8_t index)
+{
+    /* abusing system structures, fuck yeah \,,/ */
+    return (intptr_t *)net_peers[index].sin_zero;
+}
+
 void net_peer_reset()
 {
     printf("Peers reseted\n");
