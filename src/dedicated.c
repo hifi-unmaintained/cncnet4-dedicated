@@ -147,6 +147,7 @@ int main(int argc, char **argv)
     printf("   password: %s\n", strlen(password) > 0 ? password : "<no password>");
     printf("    timeout: %d seconds\n", timeout);
     printf(" maxclients: %d\n", maxclients);
+    printf("    version: %s\n", VERSION);
     printf("\n");
 
     net_bind(ip, port);
