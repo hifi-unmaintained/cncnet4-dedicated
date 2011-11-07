@@ -74,7 +74,7 @@ void log_status_clear()
     int i;
     /* rewind status line out if any, the portable clear line */
     fputc('\r', stdout);
-    for (i = 0; i < strlen(status_line); i++)
+    for (i = 0; i < strlen(status_line) + 4; i++)
         fputc(' ', stdout);
     fputc('\r', stdout);
 }
