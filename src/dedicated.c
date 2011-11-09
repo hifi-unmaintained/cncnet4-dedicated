@@ -31,6 +31,7 @@ enum
     GAME_CNC95,
     GAME_RA95,
     GAME_TS,
+    GAME_TSDTA,
     GAME_RA2,
     GAME_LAST
 };
@@ -223,6 +224,8 @@ int main(int argc, char **argv)
                     net_write_string_int32(cnt[GAME_RA95]);
                     net_write_string("ts");
                     net_write_string_int32(cnt[GAME_TS]);
+                    net_write_string("tsdta");
+                    net_write_string_int32(cnt[GAME_TSDTA]);
                     net_write_string("ra2");
                     net_write_string_int32(cnt[GAME_RA2]);
 
@@ -320,6 +323,10 @@ int main(int argc, char **argv)
                 else if (buf[4] == 0x35 && buf[5] == 0x12)
                 {
                     *net_peer_data(peer_id) = GAME_TS;
+                }
+                else if (buf[4] == 0x35 && buf[5] == 0x13)
+                {
+                    *net_peer_data(peer_id) = GAME_TSDTA;
                 }
                 else if (buf[4] == 0x36 && buf[5] == 0x12)
                 {
