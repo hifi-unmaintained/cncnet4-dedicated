@@ -71,6 +71,7 @@ int main(int argc, char **argv)
     struct timeval tv;
     struct sockaddr_in peer;
     char buf[NET_BUF_SIZE];
+    time_t booted = time(NULL);
 
     uint32_t last_packets = 0;
     uint32_t last_bytes = 0;
@@ -216,6 +217,8 @@ int main(int argc, char **argv)
                     net_write_string_int32(maxclients);
                     net_write_string("version");
                     net_write_string(VERSION);
+                    net_write_string("uptime");
+                    net_write_string_int32(now - booted);
                     net_write_string("unk");
                     net_write_string_int32(cnt[GAME_UNKNOWN]);
                     net_write_string("cnc95");
