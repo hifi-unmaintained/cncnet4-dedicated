@@ -392,6 +392,12 @@ int main(int argc, char **argv)
                     int i;
                     int proxy_link_id = net_read_int8();
 
+                    if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
+                    {
+                        log_printf("Ignored proxy packet from invalid host.\n");
+                        goto next;
+                    }
+
                     /* try to find our remote client from local list */
                     peer_id = UINT8_MAX;
                     for (i = 0; i < MAX_PEERS; i++)
