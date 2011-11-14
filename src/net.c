@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include <string.h>
 
@@ -285,6 +286,12 @@ struct sockaddr_in *net_peer_get(uint8_t index)
 void net_peer_remove(uint8_t index)
 {
     log_printf("Client %s:%d disconnected\n", inet_ntoa(net_peers[index].sin_addr), ntohs(net_peers[index].sin_port));
+
+    if (*net_peer_data(index))
+    {
+        free((void *)*net_peer_data(index));
+    }
+
     memset(&net_peers[index], 0, sizeof(net_peers[index]));
 }
 

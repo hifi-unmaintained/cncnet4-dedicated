@@ -193,6 +193,7 @@ int main(int argc, char **argv)
     {
         time_t now = time(NULL);
         int from_proxy = 0;
+        client_data *cd;
 
         if (FD_ISSET(s, &rfds))
         {
@@ -231,7 +232,7 @@ int main(int argc, char **argv)
                     {
                         if (peer_last_packet[i])
                         {
-                            client_data *cd = (client_data *)*net_peer_data(i);
+                            cd = (client_data *)*net_peer_data(i);
                             if (cd)
                             {
                                 cnt[cd->game]++;
@@ -306,20 +307,16 @@ int main(int argc, char **argv)
                     peer_id = net_peer_get_by_addr(&peer);
                     if (peer_id != UINT8_MAX)
                     {
+                        net_peer_remove(peer_id);
+                        peer_last_packet[peer_id] = 0;
+
                         if (strlen(linkto) > 0)
                         {
+                            net_send_discard(); // flush out the default reply header
                             net_write_int8(CMD_CONTROL);
                             net_write_int8(CTL_PROXY_DISCONNECT);
                             net_write_int8(peer_id);
                             net_send(&link_addr);
-                        }
-                        net_peer_remove(peer_id);
-                        peer_last_packet[peer_id] = 0;
-                        client_data *cd = (client_data *)*net_peer_data(peer_id);
-                        if (cd)
-                        {
-                            cd->game = GAME_UNKNOWN;
-                            cd->link_id = UINT8_MAX;
                         }
                     }
                     goto next;
@@ -340,7 +337,7 @@ int main(int argc, char **argv)
                     peer_id = UINT8_MAX;
                     for (i = 0; i < MAX_PEERS; i++)
                     {
-                        client_data *cd = (client_data *)*net_peer_data(i);
+                        cd = (client_data *)*net_peer_data(i);
                         if (cd && cd->link_id == proxy_link_id)
                         {
                             peer_id = i;
@@ -368,23 +365,16 @@ int main(int argc, char **argv)
                             }
                         }
 
-                        client_data *cd = (client_data *)*net_peer_data(peer_id);
-                        if (cd == NULL)
-                        {
-                            cd = malloc(sizeof(client_data));
-                            memset(cd, 0, sizeof(client_data));
-                            *net_peer_data(peer_id) = (intptr_t)cd;
-                        }
-
+                        cd = calloc(1, sizeof(client_data));
                         cd->link_id = proxy_link_id;
+                        *net_peer_data(peer_id) = (intptr_t)cd;
                     }
-
-                    net_send_discard(); // flush out the default reply header
 
                     if (peer_id != UINT8_MAX)
                     {
                         cmd = proxy_cmd;
                         from_proxy = 1;
+                        net_send_discard(); // flush out the default reply header
                         goto proxy_skip;
                     }
                     else
@@ -404,21 +394,13 @@ int main(int argc, char **argv)
                         goto next;
                     }
 
-                    /* try to find our remote client from local list */
-                    peer_id = UINT8_MAX;
                     for (i = 0; i < MAX_PEERS; i++)
                     {
-                        client_data *cd = (client_data *)*net_peer_data(i);
-                        if (cd && cd->link_id == proxy_link_id)
+                        cd = (client_data *)*net_peer_data(i);
+                        if (cd->link_id == proxy_link_id)
                         {
                             net_peer_remove(i);
                             peer_last_packet[i] = 0;
-                            client_data *cd = (client_data *)*net_peer_data(i);
-                            if (cd)
-                            {
-                                cd->game = GAME_UNKNOWN;
-                                cd->link_id = UINT8_MAX;
-                            }
                             break;
                         }
                     }
@@ -450,24 +432,21 @@ int main(int argc, char **argv)
                         }
                     }
                 }
+
+                cd = calloc(1, sizeof(client_data));
+                cd->link_id = UINT8_MAX;
+                *net_peer_data(peer_id) = (intptr_t)cd;
             }
+
+            proxy_skip: /* sorry for using goto, but I didn't care to refactor the code */
 
             if (peer_id == UINT8_MAX)
             {
                 goto next;
             }
 
-            proxy_skip: /* sorry for using goto, but I didn't care to refactor the code */
-
             peer_last_packet[peer_id] = now;
-            client_data *cd = (client_data *)*net_peer_data(peer_id);
-            if (cd == NULL)
-            {
-                cd = malloc(sizeof(client_data));
-                memset(cd, 0, sizeof(client_data));
-                cd->link_id = UINT8_MAX;
-                *net_peer_data(peer_id) = (intptr_t)cd;
-            }
+            cd = (client_data *)*net_peer_data(peer_id);
 
             len = net_read_data(buf, sizeof(buf));
 
@@ -505,8 +484,8 @@ int main(int argc, char **argv)
                 int i;
                 for (i = 0; i < MAX_PEERS; i++)
                 {
-                    client_data *cd = (client_data *)*net_peer_data(i);
-                    if (i != peer_id && cd && cd->link_id == UINT8_MAX)
+                    cd = (client_data *)*net_peer_data(i);
+                    if (cd && i != peer_id && cd->link_id == UINT8_MAX)
                     {
                         net_send_noflush(net_peer_get(i));
                     }
@@ -526,14 +505,14 @@ int main(int argc, char **argv)
             }
             else if (cmd != peer_id)
             {
-                client_data *target_cd = (client_data *)*net_peer_data(cmd);
+                cd = (client_data *)*net_peer_data(cmd);
 
-                if (target_cd && target_cd->link_id != UINT8_MAX)
+                if (cd->link_id != UINT8_MAX)
                 {
                     net_write_int8(CMD_CONTROL);
                     net_write_int8(CTL_PROXY);
                     net_write_int8(peer_id);
-                    net_write_int8(target_cd->link_id);
+                    net_write_int8(cd->link_id);
                     net_write_data(buf, len);
                     net_send(&link_addr);
                 }
@@ -560,12 +539,6 @@ int main(int argc, char **argv)
                 {
                     net_peer_remove(i);
                     peer_last_packet[i] = 0;
-                    client_data *cd = (client_data *)*net_peer_data(i);
-                    if (cd)
-                    {
-                        cd->game = GAME_UNKNOWN;
-                        cd->link_id = UINT8_MAX;
-                    }
                 }
                 else
                 {
