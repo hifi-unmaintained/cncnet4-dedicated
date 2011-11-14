@@ -507,7 +507,7 @@ int main(int argc, char **argv)
             {
                 cd = (client_data *)*net_peer_data(cmd);
 
-                if (cd->link_id != UINT8_MAX)
+                if (cd && cd->link_id != UINT8_MAX)
                 {
                     net_write_int8(CMD_CONTROL);
                     net_write_int8(CTL_PROXY);
