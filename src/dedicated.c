@@ -36,9 +36,16 @@ enum
     GAME_LAST
 };
 
+typedef struct
+{
+    uint8_t game;
+    uint8_t link_id;
+} client_data;
+
 /* configurable trough parameters */
 int port = 9000;
 char ip[32] = { "0.0.0.0" };
+char linkto[256] = { "" };
 char hostname[256] = { "Unnamed CnCNet Dedicated Server" };
 char password[32] = { "" };
 uint32_t timeout = 60;
@@ -83,7 +90,7 @@ int main(int argc, char **argv)
     uint32_t pps = 0;
 
     int opt;
-    while ((opt = getopt(argc, argv, "?hi:n:p:t:c:")) != -1)
+    while ((opt = getopt(argc, argv, "?hi:n:p:t:c:l:")) != -1)
     {
         switch (opt)
         {
@@ -118,10 +125,13 @@ int main(int argc, char **argv)
                     maxclients = MAX_PEERS;
                 }
                 break;
+            case 'l':
+                strncpy(linkto, optarg, sizeof(linkto)-1);
+                break;
             case 'h':
             case '?':
             default:
-                fprintf(stderr, "Usage: %s [-h?] [-i ip] [-n hostname] [-p password] [-t timeout] [-c maxclients] [port]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-h?] [-i ip] [-n hostname] [-p password] [-t timeout] [-c maxclients] [-l server[:port]] [port]\n", argv[0]);
                 return 1;
         }
     }
@@ -146,11 +156,27 @@ int main(int argc, char **argv)
     printf("         ip: %s\n", ip);
     printf("       port: %d\n", port);
     printf("   hostname: %s\n", hostname);
+    printf("     linkto: %s\n", strlen(linkto) > 0 ? linkto : "<none>");
     printf("   password: %s\n", strlen(password) > 0 ? password : "<no password>");
     printf("    timeout: %d seconds\n", timeout);
     printf(" maxclients: %d\n", maxclients);
     printf("    version: %s\n", VERSION);
     printf("\n");
+
+    struct sockaddr_in link_addr;
+    if (strlen(linkto))
+    {
+        int link_port = 9000;
+        char *str_port = strstr(linkto, ":");
+        if (str_port)
+        {
+            *str_port = '\0';
+            link_port = atoi(++str_port);
+        }
+
+        net_address(&link_addr, linkto, link_port);
+        printf("Linking to %s:%d\n\n", inet_ntoa(link_addr.sin_addr), ntohs(link_addr.sin_port));
+    }
 
     net_bind(ip, port);
 
@@ -166,6 +192,7 @@ int main(int argc, char **argv)
     while (select(s + 1, &rfds, NULL, NULL, &tv) > -1 && !interrupt)
     {
         time_t now = time(NULL);
+        int from_proxy = 0;
 
         if (FD_ISSET(s, &rfds))
         {
@@ -194,6 +221,7 @@ int main(int argc, char **argv)
                 {
                     /* ping is only used to test it the server is alive, so it contains no additional data */
                     net_send(&peer);
+                    goto next;
                 }
                 else if (ctl == CTL_QUERY)
                 {
@@ -203,7 +231,11 @@ int main(int argc, char **argv)
                     {
                         if (peer_last_packet[i])
                         {
-                            cnt[*net_peer_data(i)]++;
+                            client_data *cd = (client_data *)*net_peer_data(i);
+                            if (cd)
+                            {
+                                cnt[cd->game]++;
+                            }
                         }
                     }
 
@@ -233,6 +265,7 @@ int main(int argc, char **argv)
                     net_write_string_int32(cnt[GAME_RA2]);
 
                     net_send(&peer);
+                    goto next;
                 }
                 else if (ctl == CTL_RESET)
                 {
@@ -265,6 +298,7 @@ int main(int argc, char **argv)
                     }
 
                     net_send(&peer);
+                    goto next;
                 }
                 else if (ctl == CTL_DISCONNECT)
                 {
@@ -272,12 +306,111 @@ int main(int argc, char **argv)
                     peer_id = net_peer_get_by_addr(&peer);
                     if (peer_id != UINT8_MAX)
                     {
+                        if (strlen(linkto) > 0)
+                        {
+                            net_write_int8(CMD_CONTROL);
+                            net_write_int8(CTL_PROXY_DISCONNECT);
+                            net_write_int8(peer_id);
+                            net_send(&link_addr);
+                        }
                         net_peer_remove(peer_id);
                         peer_last_packet[peer_id] = 0;
                     }
+                    goto next;
                 }
+                else if (ctl == CTL_PROXY)
+                {
+                    int i;
+                    int proxy_link_id = net_read_int8();
+                    int proxy_cmd = net_read_int8();
 
-                goto next;
+                    if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
+                    {
+                        log_printf("Ignored proxy packet from invalid host.\n");
+                        goto next;
+                    }
+
+                    /* try to find our remote client from local list */
+                    peer_id = UINT8_MAX;
+                    for (i = 0; i < MAX_PEERS; i++)
+                    {
+                        client_data *cd = (client_data *)*net_peer_data(i);
+                        if (cd && cd->link_id == proxy_link_id)
+                        {
+                            peer_id = i;
+                            break;
+                        }
+                    }
+
+                    /* add to local list if not */
+                    if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
+                    {
+                        if (strlen(password) == 0)
+                        {
+                            peer_id = net_peer_add(&link_addr);
+                        }
+                        else
+                        {
+                            /* allow only whitelisted ips */
+                            for (i = 0; i < MAX_PEERS; i++)
+                            {
+                                if (peer_whitelist[i] == peer.sin_addr.s_addr)
+                                {
+                                    peer_id = net_peer_add(&link_addr);
+                                    break;
+                                }
+                            }
+                        }
+
+                        client_data *cd = (client_data *)*net_peer_data(peer_id);
+                        if (cd == NULL)
+                        {
+                            cd = malloc(sizeof(client_data));
+                            memset(cd, 0, sizeof(client_data));
+                            *net_peer_data(peer_id) = (intptr_t)cd;
+                        }
+
+                        cd->link_id = proxy_link_id;
+                    }
+
+                    net_send_discard(); // flush out the default reply header
+
+                    if (peer_id != UINT8_MAX)
+                    {
+                        cmd = proxy_cmd;
+                        from_proxy = 1;
+                        goto proxy_skip;
+                    }
+                    else
+                    {
+                        log_printf("Server full, proxy client rejected.\n");
+                        goto next;
+                    }
+                }
+                else if (ctl == CTL_PROXY_DISCONNECT)
+                {
+                    int i;
+                    int proxy_link_id = net_read_int8();
+
+                    /* try to find our remote client from local list */
+                    peer_id = UINT8_MAX;
+                    for (i = 0; i < MAX_PEERS; i++)
+                    {
+                        client_data *cd = (client_data *)*net_peer_data(i);
+                        if (cd && cd->link_id == proxy_link_id)
+                        {
+                            net_peer_remove(i);
+                            peer_last_packet[i] = 0;
+                            break;
+                        }
+                    }
+
+                    goto next;
+                }
+                else
+                {
+                    goto next;
+                }
             }
 
             peer_id = net_peer_get_by_addr(&peer);
@@ -306,48 +439,95 @@ int main(int argc, char **argv)
                 goto next;
             }
 
+            proxy_skip: /* sorry for using goto, but I didn't care to refactor the code */
+
             peer_last_packet[peer_id] = now;
+            client_data *cd = (client_data *)*net_peer_data(peer_id);
+            if (cd == NULL)
+            {
+                cd = malloc(sizeof(client_data));
+                memset(cd, 0, sizeof(client_data));
+                cd->link_id = UINT8_MAX;
+                *net_peer_data(peer_id) = (intptr_t)cd;
+            }
 
             len = net_read_data(buf, sizeof(buf));
-            net_write_int8(peer_id);
-            net_write_data(buf, len);
 
             if (cmd == CMD_BROADCAST)
             {
+                net_write_int8(peer_id);
+                net_write_data(buf, len);
+
                 /* try to detect any supported game */
                 if (buf[0] == 0x34 && buf[1] == 0x12)
                 {
-                    *net_peer_data(peer_id) = GAME_CNC95;
+                    cd->game = GAME_CNC95;
                 }
                 else if (buf[0] == 0x35 && buf[1] == 0x12)
                 {
-                    *net_peer_data(peer_id) = GAME_RA95;
+                    cd->game = GAME_RA95;
                 }
                 else if (buf[4] == 0x35 && buf[5] == 0x12)
                 {
-                    *net_peer_data(peer_id) = GAME_TS;
+                    cd->game = GAME_TS;
                 }
                 else if (buf[4] == 0x35 && buf[5] == 0x13)
                 {
-                    *net_peer_data(peer_id) = GAME_TSDTA;
+                    cd->game = GAME_TSDTA;
                 }
                 else if (buf[4] == 0x36 && buf[5] == 0x12)
                 {
-                    *net_peer_data(peer_id) = GAME_RA2;
+                    cd->game = GAME_RA2;
                 }
                 else
                 {
-                    *net_peer_data(peer_id) = GAME_UNKNOWN;
+                    cd->game = GAME_UNKNOWN;
                 }
 
-                net_broadcast(peer_id);
+                int i;
+                for (i = 0; i < MAX_PEERS; i++)
+                {
+                    client_data *cd = (client_data *)*net_peer_data(i);
+                    if (i != peer_id && cd && cd->link_id == UINT8_MAX)
+                    {
+                        net_send_noflush(net_peer_get(i));
+                    }
+                }
+                net_send_discard();
+
+                /* broadcast to linked server */
+                if (!from_proxy && strlen(linkto) > 0)
+                {
+                    net_write_int8(CMD_CONTROL);
+                    net_write_int8(CTL_PROXY);
+                    net_write_int8(peer_id);
+                    net_write_int8(CMD_BROADCAST);
+                    net_write_data(buf, len);
+                    net_send(&link_addr);
+                }
             }
             else if (cmd != peer_id)
             {
-                struct sockaddr_in *to = net_peer_get(cmd);
-                if (to)
+                client_data *target_cd = (client_data *)*net_peer_data(cmd);
+
+                if (target_cd && target_cd->link_id != UINT8_MAX)
                 {
-                    net_send(to);
+                    net_write_int8(CMD_CONTROL);
+                    net_write_int8(CTL_PROXY);
+                    net_write_int8(peer_id);
+                    net_write_int8(target_cd->link_id);
+                    net_write_data(buf, len);
+                    net_send(&link_addr);
+                }
+                else
+                {
+                    struct sockaddr_in *to = net_peer_get(cmd);
+                    if (to)
+                    {
+                        net_write_int8(peer_id);
+                        net_write_data(buf, len);
+                        net_send(to);
+                    }
                 }
             }
 

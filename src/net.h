@@ -44,10 +44,12 @@ enum
 enum
 {
     /* to dedicated from anywhere */
-    CTL_PING        = 0x00,
-    CTL_QUERY       = 0x01,
-    CTL_RESET       = 0x02,
-    CTL_DISCONNECT  = 0x03
+    CTL_PING                = 0x00,
+    CTL_QUERY               = 0x01,
+    CTL_RESET               = 0x02,
+    CTL_DISCONNECT          = 0x03,
+    CTL_PROXY               = 0x04,
+    CTL_PROXY_DISCONNECT    = 0x05
 };
 
 int net_reuse(uint16_t sock);
