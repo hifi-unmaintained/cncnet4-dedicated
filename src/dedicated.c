@@ -413,7 +413,7 @@ int main(int argc, char **argv)
                         {
                             net_peer_remove(i);
                             peer_last_packet[i] = 0;
-                            client_data *cd = (client_data *)*net_peer_data(peer_id);
+                            client_data *cd = (client_data *)*net_peer_data(i);
                             if (cd)
                             {
                                 cd->game = GAME_UNKNOWN;
