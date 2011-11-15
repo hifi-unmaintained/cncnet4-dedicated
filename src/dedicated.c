@@ -52,6 +52,7 @@ uint32_t timeout = 60;
 uint8_t maxclients = 8;
 
 uint8_t clients = 0;
+uint8_t local = 0;
 time_t peer_last_packet[MAX_PEERS];
 int32_t peer_whitelist[MAX_PEERS];
 
@@ -225,8 +226,9 @@ int main(int argc, char **argv)
     while (!interrupt)
     {
         time_t now = time(NULL);
+        client_data *cd;
 
-        clients = 0;
+        clients = local = 0;
         for (i = 0; i < MAX_PEERS; i++)
         {
             if (peer_last_packet[i] > 0)
@@ -239,6 +241,11 @@ int main(int argc, char **argv)
                 else
                 {
                     clients++;
+                    cd = (client_data *)*net_peer_data(i);
+                    if (cd->link_id == UINT8_MAX)
+                    {
+                        local++;
+                    }
                 }
             }
         }
@@ -252,8 +259,8 @@ int main(int argc, char **argv)
             last_bytes = total_bytes;
             last_time = now;
 
-            log_statusf("%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
-                hostname, clients, maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
+            log_statusf("%s [ %d/%d + %d | %d p/s, %d kB/s | total: %d p, %d kB ]",
+                hostname, local, maxclients, clients - local, pps, bps / 1024, total_packets, total_bytes / 1024);
         }
 
         net_send_discard();
@@ -266,7 +273,6 @@ int main(int argc, char **argv)
         {
             now = time(NULL);
             int from_proxy = 0;
-            client_data *cd;
 
             if (FD_ISSET(s, &rfds))
             {
@@ -300,7 +306,7 @@ int main(int argc, char **argv)
                     else if (ctl == CTL_QUERY)
                     {
                         /* query responds with the basic server information to display on a server browser */
-                        int i, local = 0, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
+                        int i, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
                         for (i = 0; i < MAX_PEERS; i++)
                         {
                             if (peer_last_packet[i])
@@ -309,10 +315,6 @@ int main(int argc, char **argv)
                                 if (cd)
                                 {
                                     cnt[cd->game]++;
-                                    if (cd->link_id == UINT8_MAX)
-                                    {
-                                        local++;
-                                    }
                                 }
                             }
                         }
