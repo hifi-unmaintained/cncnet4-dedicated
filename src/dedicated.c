@@ -71,6 +71,38 @@ void onsigterm(int signum)
     interrupt = 1;
 }
 
+uint8_t peer_add(struct sockaddr_in *addr, uint8_t link_id)
+{
+    uint8_t i, peer_id = UINT8_MAX;
+    client_data *cd;
+
+    if (net_peer_count() < maxclients)
+    {
+        if (strlen(password) == 0)
+        {
+            peer_id = net_peer_add(addr);
+        }
+        else
+        {
+            /* allow only whitelisted ips */
+            for (i = 0; i < MAX_PEERS; i++)
+            {
+                if (peer_whitelist[i] == addr->sin_addr.s_addr)
+                {
+                    peer_id = net_peer_add(addr);
+                    break;
+                }
+            }
+        }
+
+        cd = calloc(1, sizeof(client_data));
+        cd->link_id = link_id;
+        *net_peer_data(peer_id) = (intptr_t)cd;
+    }
+
+    return peer_id;
+}
+
 int main(int argc, char **argv)
 {
     int s,i;
@@ -192,6 +224,23 @@ int main(int argc, char **argv)
     while (!interrupt)
     {
         time_t now = time(NULL);
+
+        clients = 0;
+        for (i = 0; i < MAX_PEERS; i++)
+        {
+            if (peer_last_packet[i] > 0)
+            {
+                if (peer_last_packet[i] + timeout < now)
+                {
+                    net_peer_remove(i);
+                    peer_last_packet[i] = 0;
+                }
+                else
+                {
+                    clients++;
+                }
+            }
+        }
 
         if (now > last_time)
         {
@@ -369,29 +418,7 @@ int main(int argc, char **argv)
                         }
 
                         /* add to local list if not */
-                        if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
-                        {
-                            if (strlen(password) == 0)
-                            {
-                                peer_id = net_peer_add(&link_addr);
-                            }
-                            else
-                            {
-                                /* allow only whitelisted ips */
-                                for (i = 0; i < MAX_PEERS; i++)
-                                {
-                                    if (peer_whitelist[i] == peer.sin_addr.s_addr)
-                                    {
-                                        peer_id = net_peer_add(&link_addr);
-                                        break;
-                                    }
-                                }
-                            }
-
-                            cd = calloc(1, sizeof(client_data));
-                            cd->link_id = proxy_link_id;
-                            *net_peer_data(peer_id) = (intptr_t)cd;
-                        }
+                        peer_id = peer_add(&link_addr, proxy_link_id);
 
                         if (peer_id != UINT8_MAX)
                         {
@@ -436,29 +463,9 @@ int main(int argc, char **argv)
                 }
                 else
                 {
-                    peer_id = net_peer_get_by_addr(&peer);
-                    if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
+                    if ((peer_id = net_peer_get_by_addr(&peer)) == UINT8_MAX)
                     {
-                        if (strlen(password) == 0)
-                        {
-                            peer_id = net_peer_add(&peer);
-                        }
-                        else
-                        {
-                            /* allow only whitelisted ips */
-                            for (i = 0; i < MAX_PEERS; i++)
-                            {
-                                if (peer_whitelist[i] == peer.sin_addr.s_addr)
-                                {
-                                    peer_id = net_peer_add(&peer);
-                                    break;
-                                }
-                            }
-                        }
-
-                        cd = calloc(1, sizeof(client_data));
-                        cd->link_id = UINT8_MAX;
-                        *net_peer_data(peer_id) = (intptr_t)cd;
+                        peer_id = peer_add(&peer, UINT8_MAX);
                     }
                 }
 
@@ -547,24 +554,6 @@ int main(int argc, char **argv)
                             net_write_data(buf, len);
                             net_send(to);
                         }
-                    }
-                }
-
-            }
-
-            clients = 0;
-            for (i = 0; i < MAX_PEERS; i++)
-            {
-                if (peer_last_packet[i] > 0)
-                {
-                    if (peer_last_packet[i] + timeout < now)
-                    {
-                        net_peer_remove(i);
-                        peer_last_packet[i] = 0;
-                    }
-                    else
-                    {
-                        clients++;
                     }
                 }
             }
