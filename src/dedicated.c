@@ -315,7 +315,7 @@ int main(int argc, char **argv)
                             if (peer_last_packet[i])
                             {
                                 cd = (client_data *)*net_peer_data(i);
-                                if (cd)
+                                if (cd && cd->link_id == UINT8_MAX)
                                 {
                                     cnt[cd->game]++;
                                 }
