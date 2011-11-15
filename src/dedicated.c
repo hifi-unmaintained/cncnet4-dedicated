@@ -299,7 +299,7 @@ int main(int argc, char **argv)
                     else if (ctl == CTL_QUERY)
                     {
                         /* query responds with the basic server information to display on a server browser */
-                        int i, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
+                        int i, local = 0, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
                         for (i = 0; i < MAX_PEERS; i++)
                         {
                             if (peer_last_packet[i])
@@ -308,6 +308,10 @@ int main(int argc, char **argv)
                                 if (cd)
                                 {
                                     cnt[cd->game]++;
+                                    if (cd->link_id == UINT8_MAX)
+                                    {
+                                        local++;
+                                    }
                                 }
                             }
                         }
@@ -318,6 +322,8 @@ int main(int argc, char **argv)
                         net_write_string_int32(strlen(password) > 0);
                         net_write_string("clients");
                         net_write_string_int32(clients);
+                        net_write_string("local");
+                        net_write_string_int32(local);
                         net_write_string("maxclients");
                         net_write_string_int32(maxclients);
                         net_write_string("version");
