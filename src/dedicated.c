@@ -74,9 +74,10 @@ void onsigterm(int signum)
 uint8_t peer_add(struct sockaddr_in *addr, uint8_t link_id)
 {
     uint8_t i, peer_id = UINT8_MAX;
+    uint8_t peers = net_peer_count();
     client_data *cd;
 
-    if (net_peer_count() < maxclients)
+    if ((link_id == UINT8_MAX && peers < maxclients) || (link_id != UINT8_MAX && peers < MAX_PEERS))
     {
         if (strlen(password) == 0)
         {
