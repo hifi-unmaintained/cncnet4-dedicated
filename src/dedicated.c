@@ -52,7 +52,7 @@ uint32_t timeout = 60;
 uint8_t maxclients = 8;
 
 uint8_t clients = 0;
-uint8_t local = 0;
+uint8_t remote = 0;
 time_t peer_last_packet[MAX_PEERS];
 int32_t peer_whitelist[MAX_PEERS];
 
@@ -228,7 +228,7 @@ int main(int argc, char **argv)
         time_t now = time(NULL);
         client_data *cd;
 
-        clients = local = 0;
+        clients = remote = 0;
         for (i = 0; i < MAX_PEERS; i++)
         {
             if (peer_last_packet[i] > 0)
@@ -240,11 +240,14 @@ int main(int argc, char **argv)
                 }
                 else
                 {
-                    clients++;
                     cd = (client_data *)*net_peer_data(i);
                     if (cd->link_id == UINT8_MAX)
                     {
-                        local++;
+                        clients++;
+                    }
+                    else
+                    {
+                        remote++;
                     }
                 }
             }
@@ -260,7 +263,7 @@ int main(int argc, char **argv)
             last_time = now;
 
             log_statusf("%s [ %d/%d + %d | %d p/s, %d kB/s | total: %d p, %d kB ]",
-                hostname, local, maxclients, clients - local, pps, bps / 1024, total_packets, total_bytes / 1024);
+                hostname, clients, maxclients, remote, pps, bps / 1024, total_packets, total_bytes / 1024);
         }
 
         net_send_discard();
@@ -325,8 +328,8 @@ int main(int argc, char **argv)
                         net_write_string_int32(strlen(password) > 0);
                         net_write_string("clients");
                         net_write_string_int32(clients);
-                        net_write_string("local");
-                        net_write_string_int32(local);
+                        net_write_string("remote");
+                        net_write_string_int32(remote);
                         net_write_string("maxclients");
                         net_write_string_int32(maxclients);
                         net_write_string("version");
