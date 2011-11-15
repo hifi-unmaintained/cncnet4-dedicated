@@ -189,372 +189,11 @@ int main(int argc, char **argv)
     signal(SIGINT, onsigint);
     signal(SIGTERM, onsigterm);
 
-    while (select(s + 1, &rfds, NULL, NULL, &tv) > -1 && !interrupt)
+    while (!interrupt)
     {
         time_t now = time(NULL);
-        int from_proxy = 0;
-        client_data *cd;
 
-        if (FD_ISSET(s, &rfds))
-        {
-            size_t len = net_recv(&peer);
-            uint8_t cmd, peer_id;
-
-            total_packets++;
-            total_bytes += len;
-
-            if (len == 0)
-            {
-                goto next;
-            }
-
-            cmd = net_read_int8();
-
-            if (cmd == CMD_CONTROL)
-            {
-                uint8_t ctl = net_read_int8();
-
-                /* reply with the same header, rest is control command specific */
-                net_write_int8(cmd);
-                net_write_int8(ctl);
-
-                if (ctl == CTL_PING)
-                {
-                    /* ping is only used to test it the server is alive, so it contains no additional data */
-                    net_send(&peer);
-                    goto next;
-                }
-                else if (ctl == CTL_QUERY)
-                {
-                    /* query responds with the basic server information to display on a server browser */
-                    int i, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
-                    for (i = 0; i < MAX_PEERS; i++)
-                    {
-                        if (peer_last_packet[i])
-                        {
-                            cd = (client_data *)*net_peer_data(i);
-                            if (cd)
-                            {
-                                cnt[cd->game]++;
-                            }
-                        }
-                    }
-
-                    net_write_string("hostname");
-                    net_write_string(hostname);
-                    net_write_string("password");
-                    net_write_string_int32(strlen(password) > 0);
-                    net_write_string("clients");
-                    net_write_string_int32(clients);
-                    net_write_string("maxclients");
-                    net_write_string_int32(maxclients);
-                    net_write_string("version");
-                    net_write_string(VERSION);
-                    net_write_string("uptime");
-                    net_write_string_int32(now - booted);
-                    net_write_string("unk");
-                    net_write_string_int32(cnt[GAME_UNKNOWN]);
-                    net_write_string("cnc95");
-                    net_write_string_int32(cnt[GAME_CNC95]);
-                    net_write_string("ra95");
-                    net_write_string_int32(cnt[GAME_RA95]);
-                    net_write_string("ts");
-                    net_write_string_int32(cnt[GAME_TS]);
-                    net_write_string("tsdta");
-                    net_write_string_int32(cnt[GAME_TSDTA]);
-                    net_write_string("ra2");
-                    net_write_string_int32(cnt[GAME_RA2]);
-
-                    net_send(&peer);
-                    goto next;
-                }
-                else if (ctl == CTL_RESET)
-                {
-                    /* reset sets a new whitelist if server has a password */
-                    net_read_string(buf, sizeof(buf));
-
-                    /* validate control password */
-                    if (strlen(password) != 0 && strcmp(buf, password) == 0)
-                    {
-                        net_peer_reset();
-                        memset(peer_last_packet, 0, sizeof(peer_last_packet));
-                        memset(&peer_whitelist, 0, sizeof(peer_whitelist));
-
-                        log_printf("Got %d ips trough CTL_RESET\n", net_read_size() / 4);
-
-                        i = 0;
-                        while (net_read_size() >= 4)
-                        {
-                            peer_whitelist[i] = net_read_int32();
-                            log_printf(" %s\n", inet_ntoa(*(struct in_addr *)&peer_whitelist[i]));
-                            i++;
-                        }
-
-                        net_write_int8(1);
-                    }
-                    else
-                    {
-                        log_printf("CTL_RESET with invalid password\n");
-                        net_write_int8(0);
-                    }
-
-                    net_send(&peer);
-                    goto next;
-                }
-                else if (ctl == CTL_DISCONNECT)
-                {
-                    /* special packet from clients who are closing the socket so we can remove them from the active list before timeout */
-                    peer_id = net_peer_get_by_addr(&peer);
-                    if (peer_id != UINT8_MAX)
-                    {
-                        net_peer_remove(peer_id);
-                        peer_last_packet[peer_id] = 0;
-
-                        if (strlen(linkto) > 0)
-                        {
-                            net_send_discard(); // flush out the default reply header
-                            net_write_int8(CMD_CONTROL);
-                            net_write_int8(CTL_PROXY_DISCONNECT);
-                            net_write_int8(peer_id);
-                            net_send(&link_addr);
-                        }
-                    }
-                    goto next;
-                }
-                else if (ctl == CTL_PROXY)
-                {
-                    int i;
-                    int proxy_link_id = net_read_int8();
-                    int proxy_cmd = net_read_int8();
-
-                    if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
-                    {
-                        log_printf("Ignored proxy packet from invalid host.\n");
-                        goto next;
-                    }
-
-                    /* try to find our remote client from local list */
-                    peer_id = UINT8_MAX;
-                    for (i = 0; i < MAX_PEERS; i++)
-                    {
-                        cd = (client_data *)*net_peer_data(i);
-                        if (cd && cd->link_id == proxy_link_id)
-                        {
-                            peer_id = i;
-                            break;
-                        }
-                    }
-
-                    /* add to local list if not */
-                    if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
-                    {
-                        if (strlen(password) == 0)
-                        {
-                            peer_id = net_peer_add(&link_addr);
-                        }
-                        else
-                        {
-                            /* allow only whitelisted ips */
-                            for (i = 0; i < MAX_PEERS; i++)
-                            {
-                                if (peer_whitelist[i] == peer.sin_addr.s_addr)
-                                {
-                                    peer_id = net_peer_add(&link_addr);
-                                    break;
-                                }
-                            }
-                        }
-
-                        cd = calloc(1, sizeof(client_data));
-                        cd->link_id = proxy_link_id;
-                        *net_peer_data(peer_id) = (intptr_t)cd;
-                    }
-
-                    if (peer_id != UINT8_MAX)
-                    {
-                        cmd = proxy_cmd;
-                        from_proxy = 1;
-                        net_send_discard(); // flush out the default reply header
-                        goto proxy_skip;
-                    }
-                    else
-                    {
-                        log_printf("Server full, proxy client rejected.\n");
-                        goto next;
-                    }
-                }
-                else if (ctl == CTL_PROXY_DISCONNECT)
-                {
-                    int i;
-                    int proxy_link_id = net_read_int8();
-
-                    if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
-                    {
-                        log_printf("Ignored proxy packet from invalid host.\n");
-                        goto next;
-                    }
-
-                    for (i = 0; i < MAX_PEERS; i++)
-                    {
-                        cd = (client_data *)*net_peer_data(i);
-                        if (cd && cd->link_id == proxy_link_id)
-                        {
-                            net_peer_remove(i);
-                            peer_last_packet[i] = 0;
-                            break;
-                        }
-                    }
-
-                    goto next;
-                }
-                else
-                {
-                    goto next;
-                }
-            }
-
-            peer_id = net_peer_get_by_addr(&peer);
-            if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
-            {
-                if (strlen(password) == 0)
-                {
-                    peer_id = net_peer_add(&peer);
-                }
-                else
-                {
-                    /* allow only whitelisted ips */
-                    for (i = 0; i < MAX_PEERS; i++)
-                    {
-                        if (peer_whitelist[i] == peer.sin_addr.s_addr)
-                        {
-                            peer_id = net_peer_add(&peer);
-                            break;
-                        }
-                    }
-                }
-
-                cd = calloc(1, sizeof(client_data));
-                cd->link_id = UINT8_MAX;
-                *net_peer_data(peer_id) = (intptr_t)cd;
-            }
-
-            proxy_skip: /* sorry for using goto, but I didn't care to refactor the code */
-
-            if (peer_id == UINT8_MAX)
-            {
-                goto next;
-            }
-
-            peer_last_packet[peer_id] = now;
-            cd = (client_data *)*net_peer_data(peer_id);
-
-            len = net_read_data(buf, sizeof(buf));
-
-            if (cmd == CMD_BROADCAST)
-            {
-                net_write_int8(peer_id);
-                net_write_data(buf, len);
-
-                /* try to detect any supported game */
-                if (buf[0] == 0x34 && buf[1] == 0x12)
-                {
-                    cd->game = GAME_CNC95;
-                }
-                else if (buf[0] == 0x35 && buf[1] == 0x12)
-                {
-                    cd->game = GAME_RA95;
-                }
-                else if (buf[4] == 0x35 && buf[5] == 0x12)
-                {
-                    cd->game = GAME_TS;
-                }
-                else if (buf[4] == 0x35 && buf[5] == 0x13)
-                {
-                    cd->game = GAME_TSDTA;
-                }
-                else if (buf[4] == 0x36 && buf[5] == 0x12)
-                {
-                    cd->game = GAME_RA2;
-                }
-                else
-                {
-                    cd->game = GAME_UNKNOWN;
-                }
-
-                int i;
-                for (i = 0; i < MAX_PEERS; i++)
-                {
-                    cd = (client_data *)*net_peer_data(i);
-                    if (cd && i != peer_id && cd->link_id == UINT8_MAX)
-                    {
-                        net_send_noflush(net_peer_get(i));
-                    }
-                }
-                net_send_discard();
-
-                /* broadcast to linked server */
-                if (!from_proxy && strlen(linkto) > 0)
-                {
-                    net_write_int8(CMD_CONTROL);
-                    net_write_int8(CTL_PROXY);
-                    net_write_int8(peer_id);
-                    net_write_int8(CMD_BROADCAST);
-                    net_write_data(buf, len);
-                    net_send(&link_addr);
-                }
-            }
-            else if (cmd != peer_id)
-            {
-                cd = (client_data *)*net_peer_data(cmd);
-
-                if (cd && cd->link_id != UINT8_MAX)
-                {
-                    net_write_int8(CMD_CONTROL);
-                    net_write_int8(CTL_PROXY);
-                    net_write_int8(peer_id);
-                    net_write_int8(cd->link_id);
-                    net_write_data(buf, len);
-                    net_send(&link_addr);
-                }
-                else
-                {
-                    struct sockaddr_in *to = net_peer_get(cmd);
-                    if (to)
-                    {
-                        net_write_int8(peer_id);
-                        net_write_data(buf, len);
-                        net_send(to);
-                    }
-                }
-            }
-
-        }
-
-        clients = 0;
-        for (i = 0; i < MAX_PEERS; i++)
-        {
-            if (peer_last_packet[i] > 0)
-            {
-                if (peer_last_packet[i] + timeout < now)
-                {
-                    net_peer_remove(i);
-                    peer_last_packet[i] = 0;
-                }
-                else
-                {
-                    clients++;
-                }
-            }
-        }
-
-next:
-        net_send_discard();
-        FD_ZERO(&rfds);
-        FD_SET(s, &rfds);
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-
-        if (now > last_time && !interrupt)
+        if (now > last_time)
         {
             int stat_elapsed = now - last_time ;
             pps = (total_packets - last_packets) / stat_elapsed;
@@ -565,6 +204,370 @@ next:
 
             log_statusf("%s (%d/%d) [ %d p/s, %d kB/s | total: %d p, %d kB ]",
                 hostname, clients, maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
+        }
+
+        net_send_discard();
+        FD_ZERO(&rfds);
+        FD_SET(s, &rfds);
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        if (select(s + 1, &rfds, NULL, NULL, &tv) > -1 && !interrupt)
+        {
+            now = time(NULL);
+            int from_proxy = 0;
+            client_data *cd;
+
+            if (FD_ISSET(s, &rfds))
+            {
+                size_t len = net_recv(&peer);
+                uint8_t cmd, peer_id;
+
+                total_packets++;
+                total_bytes += len;
+
+                if (len == 0)
+                {
+                    continue;
+                }
+
+                cmd = net_read_int8();
+
+                if (cmd == CMD_CONTROL)
+                {
+                    uint8_t ctl = net_read_int8();
+
+                    /* reply with the same header, rest is control command specific */
+                    net_write_int8(cmd);
+                    net_write_int8(ctl);
+
+                    if (ctl == CTL_PING)
+                    {
+                        /* ping is only used to test it the server is alive, so it contains no additional data */
+                        net_send(&peer);
+                        continue;
+                    }
+                    else if (ctl == CTL_QUERY)
+                    {
+                        /* query responds with the basic server information to display on a server browser */
+                        int i, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
+                        for (i = 0; i < MAX_PEERS; i++)
+                        {
+                            if (peer_last_packet[i])
+                            {
+                                cd = (client_data *)*net_peer_data(i);
+                                if (cd)
+                                {
+                                    cnt[cd->game]++;
+                                }
+                            }
+                        }
+
+                        net_write_string("hostname");
+                        net_write_string(hostname);
+                        net_write_string("password");
+                        net_write_string_int32(strlen(password) > 0);
+                        net_write_string("clients");
+                        net_write_string_int32(clients);
+                        net_write_string("maxclients");
+                        net_write_string_int32(maxclients);
+                        net_write_string("version");
+                        net_write_string(VERSION);
+                        net_write_string("uptime");
+                        net_write_string_int32(now - booted);
+                        net_write_string("unk");
+                        net_write_string_int32(cnt[GAME_UNKNOWN]);
+                        net_write_string("cnc95");
+                        net_write_string_int32(cnt[GAME_CNC95]);
+                        net_write_string("ra95");
+                        net_write_string_int32(cnt[GAME_RA95]);
+                        net_write_string("ts");
+                        net_write_string_int32(cnt[GAME_TS]);
+                        net_write_string("tsdta");
+                        net_write_string_int32(cnt[GAME_TSDTA]);
+                        net_write_string("ra2");
+                        net_write_string_int32(cnt[GAME_RA2]);
+
+                        net_send(&peer);
+                        continue;
+                    }
+                    else if (ctl == CTL_RESET)
+                    {
+                        /* reset sets a new whitelist if server has a password */
+                        net_read_string(buf, sizeof(buf));
+
+                        /* validate control password */
+                        if (strlen(password) != 0 && strcmp(buf, password) == 0)
+                        {
+                            net_peer_reset();
+                            memset(peer_last_packet, 0, sizeof(peer_last_packet));
+                            memset(&peer_whitelist, 0, sizeof(peer_whitelist));
+
+                            log_printf("Got %d ips trough CTL_RESET\n", net_read_size() / 4);
+
+                            i = 0;
+                            while (net_read_size() >= 4)
+                            {
+                                peer_whitelist[i] = net_read_int32();
+                                log_printf(" %s\n", inet_ntoa(*(struct in_addr *)&peer_whitelist[i]));
+                                i++;
+                            }
+
+                            net_write_int8(1);
+                        }
+                        else
+                        {
+                            log_printf("CTL_RESET with invalid password\n");
+                            net_write_int8(0);
+                        }
+
+                        net_send(&peer);
+                        continue;
+                    }
+                    else if (ctl == CTL_DISCONNECT)
+                    {
+                        /* special packet from clients who are closing the socket so we can remove them from the active list before timeout */
+                        peer_id = net_peer_get_by_addr(&peer);
+                        if (peer_id != UINT8_MAX)
+                        {
+                            net_peer_remove(peer_id);
+                            peer_last_packet[peer_id] = 0;
+
+                            if (strlen(linkto) > 0)
+                            {
+                                net_send_discard(); // flush out the default reply header
+                                net_write_int8(CMD_CONTROL);
+                                net_write_int8(CTL_PROXY_DISCONNECT);
+                                net_write_int8(peer_id);
+                                net_send(&link_addr);
+                            }
+                        }
+                        continue;
+                    }
+                    else if (ctl == CTL_PROXY)
+                    {
+                        int i;
+                        int proxy_link_id = net_read_int8();
+                        int proxy_cmd = net_read_int8();
+
+                        if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
+                        {
+                            log_printf("Ignored proxy packet from invalid host.\n");
+                            continue;
+                        }
+
+                        /* try to find our remote client from local list */
+                        peer_id = UINT8_MAX;
+                        for (i = 0; i < MAX_PEERS; i++)
+                        {
+                            cd = (client_data *)*net_peer_data(i);
+                            if (cd && cd->link_id == proxy_link_id)
+                            {
+                                peer_id = i;
+                                break;
+                            }
+                        }
+
+                        /* add to local list if not */
+                        if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
+                        {
+                            if (strlen(password) == 0)
+                            {
+                                peer_id = net_peer_add(&link_addr);
+                            }
+                            else
+                            {
+                                /* allow only whitelisted ips */
+                                for (i = 0; i < MAX_PEERS; i++)
+                                {
+                                    if (peer_whitelist[i] == peer.sin_addr.s_addr)
+                                    {
+                                        peer_id = net_peer_add(&link_addr);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            cd = calloc(1, sizeof(client_data));
+                            cd->link_id = proxy_link_id;
+                            *net_peer_data(peer_id) = (intptr_t)cd;
+                        }
+
+                        if (peer_id != UINT8_MAX)
+                        {
+                            cmd = proxy_cmd;
+                            from_proxy = 1;
+                            net_send_discard(); // flush out the default reply header
+                        }
+                        else
+                        {
+                            log_printf("Server full, proxy client rejected.\n");
+                            continue;
+                        }
+                    }
+                    else if (ctl == CTL_PROXY_DISCONNECT)
+                    {
+                        int i;
+                        int proxy_link_id = net_read_int8();
+
+                        if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
+                        {
+                            log_printf("Ignored proxy packet from invalid host.\n");
+                            continue;
+                        }
+
+                        for (i = 0; i < MAX_PEERS; i++)
+                        {
+                            cd = (client_data *)*net_peer_data(i);
+                            if (cd && cd->link_id == proxy_link_id)
+                            {
+                                net_peer_remove(i);
+                                peer_last_packet[i] = 0;
+                                break;
+                            }
+                        }
+
+                        continue;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    peer_id = net_peer_get_by_addr(&peer);
+                    if (peer_id == UINT8_MAX && net_peer_count() < maxclients)
+                    {
+                        if (strlen(password) == 0)
+                        {
+                            peer_id = net_peer_add(&peer);
+                        }
+                        else
+                        {
+                            /* allow only whitelisted ips */
+                            for (i = 0; i < MAX_PEERS; i++)
+                            {
+                                if (peer_whitelist[i] == peer.sin_addr.s_addr)
+                                {
+                                    peer_id = net_peer_add(&peer);
+                                    break;
+                                }
+                            }
+                        }
+
+                        cd = calloc(1, sizeof(client_data));
+                        cd->link_id = UINT8_MAX;
+                        *net_peer_data(peer_id) = (intptr_t)cd;
+                    }
+                }
+
+                if (peer_id == UINT8_MAX)
+                {
+                    continue;
+                }
+
+                peer_last_packet[peer_id] = now;
+                cd = (client_data *)*net_peer_data(peer_id);
+
+                len = net_read_data(buf, sizeof(buf));
+
+                if (cmd == CMD_BROADCAST)
+                {
+                    net_write_int8(peer_id);
+                    net_write_data(buf, len);
+
+                    /* try to detect any supported game */
+                    if (buf[0] == 0x34 && buf[1] == 0x12)
+                    {
+                        cd->game = GAME_CNC95;
+                    }
+                    else if (buf[0] == 0x35 && buf[1] == 0x12)
+                    {
+                        cd->game = GAME_RA95;
+                    }
+                    else if (buf[4] == 0x35 && buf[5] == 0x12)
+                    {
+                        cd->game = GAME_TS;
+                    }
+                    else if (buf[4] == 0x35 && buf[5] == 0x13)
+                    {
+                        cd->game = GAME_TSDTA;
+                    }
+                    else if (buf[4] == 0x36 && buf[5] == 0x12)
+                    {
+                        cd->game = GAME_RA2;
+                    }
+                    else
+                    {
+                        cd->game = GAME_UNKNOWN;
+                    }
+
+                    int i;
+                    for (i = 0; i < MAX_PEERS; i++)
+                    {
+                        cd = (client_data *)*net_peer_data(i);
+                        if (cd && i != peer_id && cd->link_id == UINT8_MAX)
+                        {
+                            net_send_noflush(net_peer_get(i));
+                        }
+                    }
+                    net_send_discard();
+
+                    /* broadcast to linked server */
+                    if (!from_proxy && strlen(linkto) > 0)
+                    {
+                        net_write_int8(CMD_CONTROL);
+                        net_write_int8(CTL_PROXY);
+                        net_write_int8(peer_id);
+                        net_write_int8(CMD_BROADCAST);
+                        net_write_data(buf, len);
+                        net_send(&link_addr);
+                    }
+                }
+                else if (cmd != peer_id)
+                {
+                    cd = (client_data *)*net_peer_data(cmd);
+
+                    if (cd && cd->link_id != UINT8_MAX)
+                    {
+                        net_write_int8(CMD_CONTROL);
+                        net_write_int8(CTL_PROXY);
+                        net_write_int8(peer_id);
+                        net_write_int8(cd->link_id);
+                        net_write_data(buf, len);
+                        net_send(&link_addr);
+                    }
+                    else
+                    {
+                        struct sockaddr_in *to = net_peer_get(cmd);
+                        if (to)
+                        {
+                            net_write_int8(peer_id);
+                            net_write_data(buf, len);
+                            net_send(to);
+                        }
+                    }
+                }
+
+            }
+
+            clients = 0;
+            for (i = 0; i < MAX_PEERS; i++)
+            {
+                if (peer_last_packet[i] > 0)
+                {
+                    if (peer_last_packet[i] + timeout < now)
+                    {
+                        net_peer_remove(i);
+                        peer_last_packet[i] = 0;
+                    }
+                    else
+                    {
+                        clients++;
+                    }
+                }
+            }
         }
     }
 
