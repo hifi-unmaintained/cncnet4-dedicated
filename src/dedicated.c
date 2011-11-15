@@ -427,7 +427,10 @@ int main(int argc, char **argv)
                         }
 
                         /* add to local list if not */
-                        peer_id = peer_add(&link_addr, proxy_link_id);
+                        if (peer_id == UINT8_MAX)
+                        {
+                            peer_id = peer_add(&link_addr, proxy_link_id);
+                        }
 
                         if (peer_id != UINT8_MAX)
                         {
