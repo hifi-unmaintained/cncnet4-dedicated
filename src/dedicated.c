@@ -325,8 +325,7 @@ int main(int argc, char **argv)
 
                 if (cmd == CMD_PING)
                 {
-                    int32_t seq = net_read_int32();
-                    log_printf("%s:%d pong (%d)\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), seq);
+                    net_read_int32();
                     client->last_packet = now;
                     client->ping_count = 0;
                     continue;
