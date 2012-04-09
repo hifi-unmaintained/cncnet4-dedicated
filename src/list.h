@@ -57,7 +57,14 @@
 #define LIST_REMOVE(list, el)                               \
     if ((list) == (el))                                     \
     {                                                       \
-        (list) = NULL;                                      \
+        if ((el)->next)                                     \
+        {                                                   \
+            (list) = (el)->next;                            \
+        }                                                   \
+        else                                                \
+        {                                                   \
+            (list) = NULL;                                  \
+        }                                                   \
     }                                                       \
     else                                                    \
     {                                                       \
@@ -72,4 +79,5 @@
             }                                               \
             (el) = (el)->next;                              \
         } while(el);                                        \
+        (el) = _eltmp;                                      \
     }
