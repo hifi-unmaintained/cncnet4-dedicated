@@ -64,6 +64,7 @@ enum
 typedef struct Client
 {
     struct sockaddr_in  addr;
+    uint8_t             p2p;
     uint32_t            last_packet;
     uint32_t            last_ping;
     uint32_t            ping_count;
@@ -381,6 +382,8 @@ int main(int argc, char **argv)
                         client->game = GAME_UNKNOWN;
                     }
 
+                    client->p2p = (cmd == CMD_P2P);
+
                     if (client->last_packet == 0)
                     {
                         log_printf("%s:%d connected with %s (%s)\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), game_str(client->game), cmd == CMD_P2P ? "p2p" : "tun");
@@ -428,7 +431,8 @@ int main(int argc, char **argv)
                     Client *tmp;
                     LIST_FOREACH (clients, tmp)
                     {
-                        if (tmp->addr.sin_addr.s_addr == to_ip && tmp->addr.sin_port == to_port)
+                        /* hack: if someone from the destination ip is registered as p2p client, ignore destination port */
+                        if (tmp->addr.sin_addr.s_addr == to_ip && (tmp->addr.sin_port == to_port || (ntohs(to_port) == 8054 && tmp->p2p)))
                         {
                             client_to = tmp;
                             break;
