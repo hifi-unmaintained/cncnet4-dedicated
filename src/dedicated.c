@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Toni Spets <toni.spets@iki.fi>
+ * Copyright (c) 2011, 2012 Toni Spets <toni.spets@iki.fi>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -20,6 +20,7 @@
 #include <signal.h>
 #include "net.h"
 #include "log.h"
+#include "list.h"
 
 /* mingw supports it and I really want getopt(3) */
 #include <unistd.h>
@@ -32,31 +33,52 @@ enum
     GAME_RA95,
     GAME_TS,
     GAME_TSDTA,
+    GAME_TSTI,
     GAME_RA2,
     GAME_LAST
 };
 
-typedef struct
+const char *game_str(int game)
 {
-    uint8_t game;
-    uint8_t link_id;
-} client_data;
+    switch (game)
+    {
+        case GAME_CNC95:    return "C&C95";
+        case GAME_RA95:     return "RA95";
+        case GAME_TS:       return "TS";
+        case GAME_TSDTA:    return "TSDTA";
+        case GAME_TSTI:     return "TSTI";
+        case GAME_RA2:      return "RA2";
+        default:            return "UNKNOWN";
+    }
+}
 
-/* configurable trough parameters */
-int port = 9000;
-char ip[32] = { "0.0.0.0" };
-char linkto[256] = { "" };
-char hostname[256] = { "Unnamed CnCNet Dedicated Server" };
-char password[32] = { "" };
-uint32_t timeout = 60;
-uint8_t maxclients = 8;
+enum
+{
+    CMD_TUNNEL,     /* 0 */
+    CMD_P2P,        /* 1 */
+    CMD_DISCONNECT, /* 2 */
+    CMD_PING,       /* 3 */
+    CMD_QUERY       /* 4 */
+};
 
-uint8_t clients = 0;
-uint8_t remote = 0;
-time_t peer_last_packet[MAX_PEERS];
-int32_t peer_whitelist[MAX_PEERS];
+typedef struct Client
+{
+    struct sockaddr_in  addr;
+    uint32_t            last_packet;
+    uint32_t            last_ping;
+    uint32_t            ping_count;
+    uint8_t             game;
+    struct Client       *next;
+} Client;
 
-void ann_main(const char *url);
+typedef struct Config
+{
+    int32_t             port;
+    char                ip[32];
+    char                hostname[256];
+    int32_t             timeout;
+    int32_t             maxclients;
+} Config;
 
 int interrupt = 0;
 void onsigint(int signum)
@@ -72,42 +94,13 @@ void onsigterm(int signum)
     interrupt = 1;
 }
 
-uint8_t peer_add(struct sockaddr_in *addr, uint8_t link_id)
-{
-    uint8_t i, peer_id = UINT8_MAX;
-    uint8_t peers = net_peer_count();
-    client_data *cd;
-
-    if ((link_id == UINT8_MAX && peers < maxclients) || (link_id != UINT8_MAX && peers < MAX_PEERS))
-    {
-        if (strlen(password) == 0)
-        {
-            peer_id = net_peer_add(addr);
-        }
-        else
-        {
-            /* allow only whitelisted ips */
-            for (i = 0; i < MAX_PEERS; i++)
-            {
-                if (peer_whitelist[i] == addr->sin_addr.s_addr)
-                {
-                    peer_id = net_peer_add(addr);
-                    break;
-                }
-            }
-        }
-
-        cd = calloc(1, sizeof(client_data));
-        cd->link_id = link_id;
-        *net_peer_data(peer_id) = (intptr_t)cd;
-    }
-
-    return peer_id;
-}
-
 int main(int argc, char **argv)
 {
-    int s,i;
+    Client *client;
+    Client *clients = NULL;
+    Config config;
+
+    int s, opt;
     fd_set rfds;
     struct timeval tv;
     struct sockaddr_in peer;
@@ -123,102 +116,78 @@ int main(int argc, char **argv)
     uint32_t bps = 0;
     uint32_t pps = 0;
 
-    int opt;
-    while ((opt = getopt(argc, argv, "?hi:n:p:t:c:l:")) != -1)
+    config.port = 9001;
+    strcpy(config.ip, "0.0.0.0");
+    strcpy(config.hostname, "Unnamed CnCNet 4.0 Server");
+    config.timeout = 10;
+    config.maxclients = 0;
+
+    while ((opt = getopt(argc, argv, "?hi:n:t:c:l:")) != -1)
     {
         switch (opt)
         {
             case 'i':
-                strncpy(ip, optarg, sizeof(ip)-1);
+                strncpy(config.ip, optarg, sizeof(config.ip)-1);
                 break;
             case 'n':
-                strncpy(hostname, optarg, sizeof(hostname)-1);
-                break;
-            case 'p':
-                strncpy(password, optarg, sizeof(password)-1);
+                strncpy(config.hostname, optarg, sizeof(config.hostname)-1);
                 break;
             case 't':
-                timeout = atoi(optarg);
-                if (timeout < 1)
+                config.timeout = atoi(optarg);
+                if (config.timeout < 1)
                 {
-                    timeout = 1;
+                    config.timeout = 1;
                 }
-                else if (timeout > 3600)
+                else if (config.timeout > 3600)
                 {
-                    timeout = 3600;
+                    config.timeout = 3600;
                 }
                 break;
             case 'c':
-                maxclients = atoi(optarg);
-                if (maxclients < 2)
+                config.maxclients = atoi(optarg);
+                if (config.maxclients < 0)
                 {
-                    maxclients = 2;
+                    config.maxclients = 0;
                 }
-                else if (maxclients > MAX_PEERS)
-                {
-                    maxclients = MAX_PEERS;
-                }
-                break;
-            case 'l':
-                strncpy(linkto, optarg, sizeof(linkto)-1);
                 break;
             case 'h':
             case '?':
             default:
-                fprintf(stderr, "Usage: %s [-h?] [-i ip] [-n hostname] [-p password] [-t timeout] [-c maxclients] [-l server[:port]] [port]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-h?] [-i ip] [-n hostname] [-t timeout] [-c maxclients] [port]\n", argv[0]);
                 return 1;
         }
     }
 
     if (optind < argc)
     {
-        port = atoi(argv[optind]);
-        if (port < 1024)
+        config.port = atoi(argv[optind]);
+        if (config.port < 1024)
         {
-            port = 1024;
+            config.port = 1024;
         }
-        else if (port > 65535)
+        else if (config.port > 65535)
         {
-            port = 65535;
+            config.port = 65535;
         }
     }
 
     s = net_init();
 
-    printf("CnCNet Dedicated Server\n");
-    printf("=======================\n");
-    printf("         ip: %s\n", ip);
-    printf("       port: %d\n", port);
-    printf("   hostname: %s\n", hostname);
-    printf("     linkto: %s\n", strlen(linkto) > 0 ? linkto : "<none>");
-    printf("   password: %s\n", strlen(password) > 0 ? password : "<no password>");
-    printf("    timeout: %d seconds\n", timeout);
-    printf(" maxclients: %d\n", maxclients);
+    printf("CnCNet 4.0 Server\n");
+    printf("=================\n");
+    printf("         ip: %s\n", config.ip);
+    printf("       port: %d\n", config.port);
+    printf("   hostname: %s\n", config.hostname);
+    printf("    timeout: %d seconds\n", config.timeout);
+    printf(" maxclients: %d\n", config.maxclients);
     printf("    version: %s\n", VERSION);
     printf("\n");
 
-    struct sockaddr_in link_addr;
-    if (strlen(linkto))
-    {
-        int link_port = 9000;
-        char *str_port = strstr(linkto, ":");
-        if (str_port)
-        {
-            *str_port = '\0';
-            link_port = atoi(++str_port);
-        }
-
-        net_address(&link_addr, linkto, link_port);
-        printf("Linking to %s:%d\n\n", inet_ntoa(link_addr.sin_addr), ntohs(link_addr.sin_port));
-    }
-
-    net_bind(ip, port);
+    net_bind(config.ip, config.port);
 
     FD_ZERO(&rfds);
     FD_SET(s, &rfds);
     memset(&tv, 0, sizeof(tv));
-    memset(&peer_last_packet, 0, sizeof(peer_last_packet));
-    memset(&peer_whitelist, 0, sizeof(peer_whitelist));
 
     signal(SIGINT, onsigint);
     signal(SIGTERM, onsigterm);
@@ -226,32 +195,7 @@ int main(int argc, char **argv)
     while (!interrupt)
     {
         time_t now = time(NULL);
-        client_data *cd;
-
-        clients = remote = 0;
-        for (i = 0; i < MAX_PEERS; i++)
-        {
-            if (peer_last_packet[i] > 0)
-            {
-                if (peer_last_packet[i] + timeout < now)
-                {
-                    net_peer_remove(i);
-                    peer_last_packet[i] = 0;
-                }
-                else
-                {
-                    cd = (client_data *)*net_peer_data(i);
-                    if (cd->link_id == UINT8_MAX)
-                    {
-                        clients++;
-                    }
-                    else
-                    {
-                        remote++;
-                    }
-                }
-            }
-        }
+        int num_clients = 0;
 
         if (now > last_time)
         {
@@ -262,8 +206,14 @@ int main(int argc, char **argv)
             last_bytes = total_bytes;
             last_time = now;
 
-            log_statusf("%s [ %d/%d + %d | %d p/s, %d kB/s | total: %d p, %d kB ]",
-                hostname, clients, maxclients, remote, pps, bps / 1024, total_packets, total_bytes / 1024);
+            num_clients = 0;
+            LIST_FOREACH (clients, client)
+            {
+                num_clients++;
+            }
+
+            log_statusf("%s [ %d/%d | %d p/s, %d kB/s | total: %d p, %d kB ]",
+                config.hostname, num_clients, config.maxclients, pps, bps / 1024, total_packets, total_bytes / 1024);
         }
 
         net_send_discard();
@@ -275,12 +225,11 @@ int main(int argc, char **argv)
         if (select(s + 1, &rfds, NULL, NULL, &tv) > -1 && !interrupt)
         {
             now = time(NULL);
-            int from_proxy = 0;
 
             if (FD_ISSET(s, &rfds))
             {
                 size_t len = net_recv(&peer);
-                uint8_t cmd, peer_id;
+                uint8_t cmd;
 
                 total_packets++;
                 total_bytes += len;
@@ -292,283 +241,235 @@ int main(int argc, char **argv)
 
                 cmd = net_read_int8();
 
-                if (cmd == CMD_CONTROL)
+                if (cmd == CMD_QUERY)
                 {
-                    uint8_t ctl = net_read_int8();
+                    /* query responds with the basic server information to display on a server browser */
+                    int cnt[GAME_LAST] = { 0, 0, 0, 0, 0, 0, 0 };
 
-                    /* reply with the same header, rest is control command specific */
-                    net_write_int8(cmd);
-                    net_write_int8(ctl);
-
-                    if (ctl == CTL_PING)
+                    num_clients = 0;
+                    LIST_FOREACH (clients, client)
                     {
-                        /* ping is only used to test it the server is alive, so it contains no additional data */
-                        net_send(&peer);
-                        continue;
+                        cnt[client->game]++;
+                        num_clients++;
                     }
-                    else if (ctl == CTL_QUERY)
-                    {
-                        /* query responds with the basic server information to display on a server browser */
-                        int i, cnt[GAME_LAST] = { 0, 0, 0, 0, 0 };
-                        for (i = 0; i < MAX_PEERS; i++)
-                        {
-                            if (peer_last_packet[i])
-                            {
-                                cd = (client_data *)*net_peer_data(i);
-                                if (cd && cd->link_id == UINT8_MAX)
-                                {
-                                    cnt[cd->game]++;
-                                }
-                            }
-                        }
 
-                        net_write_string("hostname");
-                        net_write_string(hostname);
-                        net_write_string("password");
-                        net_write_string_int32(strlen(password) > 0);
-                        net_write_string("clients");
-                        net_write_string_int32(clients);
-                        net_write_string("remote");
-                        net_write_string_int32(remote);
-                        net_write_string("maxclients");
-                        net_write_string_int32(maxclients);
-                        net_write_string("version");
-                        net_write_string(VERSION);
-                        net_write_string("uptime");
-                        net_write_string_int32(now - booted);
-                        net_write_string("unk");
-                        net_write_string_int32(cnt[GAME_UNKNOWN]);
-                        net_write_string("cnc95");
-                        net_write_string_int32(cnt[GAME_CNC95]);
-                        net_write_string("ra95");
-                        net_write_string_int32(cnt[GAME_RA95]);
-                        net_write_string("ts");
-                        net_write_string_int32(cnt[GAME_TS]);
-                        net_write_string("tsdta");
-                        net_write_string_int32(cnt[GAME_TSDTA]);
-                        net_write_string("ra2");
-                        net_write_string_int32(cnt[GAME_RA2]);
+                    net_write_int8(CMD_QUERY);
+                    net_write_string("hostname");
+                    net_write_string(config.hostname);
+                    net_write_string("clients");
+                    net_write_string_int32(num_clients);
+                    net_write_string("maxclients");
+                    net_write_string_int32(config.maxclients);
+                    net_write_string("version");
+                    net_write_string(VERSION);
+                    net_write_string("uptime");
+                    net_write_string_int32(now - booted);
+                    net_write_string("unk");
+                    net_write_string_int32(cnt[GAME_UNKNOWN]);
+                    net_write_string("cnc95");
+                    net_write_string_int32(cnt[GAME_CNC95]);
+                    net_write_string("ra95");
+                    net_write_string_int32(cnt[GAME_RA95]);
+                    net_write_string("ts");
+                    net_write_string_int32(cnt[GAME_TS]);
+                    net_write_string("tsdta");
+                    net_write_string_int32(cnt[GAME_TSDTA]);
+                    net_write_string("tsti");
+                    net_write_string_int32(cnt[GAME_TSTI]);
+                    net_write_string("ra2");
+                    net_write_string_int32(cnt[GAME_RA2]);
 
-                        net_send(&peer);
-                        continue;
-                    }
-                    else if (ctl == CTL_RESET)
-                    {
-                        /* reset sets a new whitelist if server has a password */
-                        net_read_string(buf, sizeof(buf));
-
-                        /* validate control password */
-                        if (strlen(password) != 0 && strcmp(buf, password) == 0)
-                        {
-                            net_peer_reset();
-                            memset(peer_last_packet, 0, sizeof(peer_last_packet));
-                            memset(&peer_whitelist, 0, sizeof(peer_whitelist));
-
-                            log_printf("Got %d ips trough CTL_RESET\n", net_read_size() / 4);
-
-                            i = 0;
-                            while (net_read_size() >= 4)
-                            {
-                                peer_whitelist[i] = net_read_int32();
-                                log_printf(" %s\n", inet_ntoa(*(struct in_addr *)&peer_whitelist[i]));
-                                i++;
-                            }
-
-                            net_write_int8(1);
-                        }
-                        else
-                        {
-                            log_printf("CTL_RESET with invalid password\n");
-                            net_write_int8(0);
-                        }
-
-                        net_send(&peer);
-                        continue;
-                    }
-                    else if (ctl == CTL_DISCONNECT)
-                    {
-                        /* special packet from clients who are closing the socket so we can remove them from the active list before timeout */
-                        peer_id = net_peer_get_by_addr(&peer);
-                        if (peer_id != UINT8_MAX)
-                        {
-                            net_peer_remove(peer_id);
-                            peer_last_packet[peer_id] = 0;
-
-                            if (strlen(linkto) > 0)
-                            {
-                                net_send_discard(); // flush out the default reply header
-                                net_write_int8(CMD_CONTROL);
-                                net_write_int8(CTL_PROXY_DISCONNECT);
-                                net_write_int8(peer_id);
-                                net_send(&link_addr);
-                            }
-                        }
-                        continue;
-                    }
-                    else if (ctl == CTL_PROXY)
-                    {
-                        int i;
-                        int proxy_link_id = net_read_int8();
-                        int proxy_cmd = net_read_int8();
-
-                        if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
-                        {
-                            log_printf("Ignored proxy packet from invalid host.\n");
-                            continue;
-                        }
-
-                        /* try to find our remote client from local list */
-                        peer_id = UINT8_MAX;
-                        for (i = 0; i < MAX_PEERS; i++)
-                        {
-                            cd = (client_data *)*net_peer_data(i);
-                            if (cd && cd->link_id == proxy_link_id)
-                            {
-                                peer_id = i;
-                                break;
-                            }
-                        }
-
-                        /* add to local list if not */
-                        if (peer_id == UINT8_MAX)
-                        {
-                            peer_id = peer_add(&link_addr, proxy_link_id);
-                        }
-
-                        if (peer_id != UINT8_MAX)
-                        {
-                            cmd = proxy_cmd;
-                            from_proxy = 1;
-                            net_send_discard(); // flush out the default reply header
-                        }
-                        else
-                        {
-                            log_printf("Server full, proxy client rejected.\n");
-                            continue;
-                        }
-                    }
-                    else if (ctl == CTL_PROXY_DISCONNECT)
-                    {
-                        int i;
-                        int proxy_link_id = net_read_int8();
-
-                        if (peer.sin_addr.s_addr != link_addr.sin_addr.s_addr)
-                        {
-                            log_printf("Ignored proxy packet from invalid host.\n");
-                            continue;
-                        }
-
-                        for (i = 0; i < MAX_PEERS; i++)
-                        {
-                            cd = (client_data *)*net_peer_data(i);
-                            if (cd && cd->link_id == proxy_link_id)
-                            {
-                                net_peer_remove(i);
-                                peer_last_packet[i] = 0;
-                                break;
-                            }
-                        }
-
-                        continue;
-                    }
-                    else
-                    {
-                        continue;
-                    }
-                }
-                else
-                {
-                    if ((peer_id = net_peer_get_by_addr(&peer)) == UINT8_MAX)
-                    {
-                        peer_id = peer_add(&peer, UINT8_MAX);
-                    }
-                }
-
-                if (peer_id == UINT8_MAX)
-                {
+                    net_send(&peer);
                     continue;
                 }
 
-                peer_last_packet[peer_id] = now;
-                cd = (client_data *)*net_peer_data(peer_id);
+                /* look for our client */
+                client = NULL;
+                Client *a;
+                LIST_FOREACH (clients, a)
+                {
+                    if (a->addr.sin_addr.s_addr == peer.sin_addr.s_addr && a->addr.sin_port == peer.sin_port)
+                    {
+                        client = a;
+                        break;
+                    }
+                }
 
+                if (client == NULL)
+                {
+                    /* ignore disconnect packets swhen not connected */
+                    if (cmd == CMD_DISCONNECT)
+                    {
+                        continue;
+                    }
+
+                    /* ignore new clients when hitting the maximum, can't do much more than that */
+                    if (config.maxclients > 0 && num_clients == config.maxclients)
+                    {
+                        continue;
+                    }
+
+                    client = LIST_NEW(Client);
+                    memcpy(&client->addr, &peer, sizeof peer);
+                    LIST_INSERT(clients, client);
+                }
+
+                if (cmd == CMD_DISCONNECT)
+                {
+                    log_printf("%s:%d disconnected\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
+                    LIST_REMOVE(clients, client);
+                    FREE(client);
+                    /* special packet from clients who are closing the socket so we can remove them from the active list before timeout */
+                    continue;
+                }
+
+                if (cmd == CMD_PING)
+                {
+                    int32_t seq = net_read_int32();
+                    log_printf("%s:%d pong (%d)\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), seq);
+                    client->last_packet = now;
+                    client->ping_count = 0;
+                    continue;
+                }
+
+                uint32_t to_ip = net_read_int32();
+                uint16_t to_port = net_read_int16();
+                Client *client_to = NULL;
                 len = net_read_data(buf, sizeof(buf));
 
-                if (cmd == CMD_BROADCAST)
-                {
-                    net_write_int8(peer_id);
-                    net_write_data(buf, len);
+                /* discard invalid destinations */
+                if (to_ip == 0 || to_port == 0) {
+                    /* if it was a complete stray packet, just ignore the client completely */
+                    if (client->game == GAME_UNKNOWN)
+                    {
+                        LIST_REMOVE(clients, client);
+                        FREE(client);
+                    }
+                    continue;
+                }
 
+                /* broadcast */
+                if (to_ip == 0xFFFFFFFF)
+                {
                     /* try to detect any supported game */
                     if (buf[0] == 0x34 && buf[1] == 0x12)
                     {
-                        cd->game = GAME_CNC95;
+                        client->game = GAME_CNC95;
                     }
                     else if (buf[0] == 0x35 && buf[1] == 0x12)
                     {
-                        cd->game = GAME_RA95;
+                        client->game = GAME_RA95;
                     }
                     else if (buf[4] == 0x35 && buf[5] == 0x12)
                     {
-                        cd->game = GAME_TS;
+                        client->game = GAME_TS;
                     }
                     else if (buf[4] == 0x35 && buf[5] == 0x13)
                     {
-                        cd->game = GAME_TSDTA;
+                        client->game = GAME_TSDTA;
+                    }
+                    else if (buf[4] == 0x35 && buf[5] == 0x14)
+                    {
+                        client->game = GAME_TSTI;
                     }
                     else if (buf[4] == 0x36 && buf[5] == 0x12)
                     {
-                        cd->game = GAME_RA2;
+                        client->game = GAME_RA2;
                     }
                     else
                     {
-                        cd->game = GAME_UNKNOWN;
+                        client->game = GAME_UNKNOWN;
                     }
 
-                    int i;
-                    for (i = 0; i < MAX_PEERS; i++)
+                    if (client->last_packet == 0)
                     {
-                        cd = (client_data *)*net_peer_data(i);
-                        if (cd && i != peer_id && cd->link_id == UINT8_MAX)
+                        log_printf("%s:%d connected with %s (%s)\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), game_str(client->game), cmd == CMD_P2P ? "p2p" : "tun");
+                    }
+
+                    /* hack: the motd bot can connect with an empty broadcast without broadcasting anything */
+                    if (len)
+                    {
+                        net_write_int8(cmd);
+                        net_write_int32(peer.sin_addr.s_addr);
+
+                        /* fake P2P port, always */
+                        if (cmd == CMD_P2P)
                         {
-                            net_send_noflush(net_peer_get(i));
+                            net_write_int16(htons(8054));
                         }
-                    }
-                    net_send_discard();
+                        else
+                        {
+                            net_write_int16(peer.sin_port);
+                        }
 
-                    /* broadcast to linked server */
-                    if (!from_proxy && strlen(linkto) > 0)
-                    {
-                        net_write_int8(CMD_CONTROL);
-                        net_write_int8(CTL_PROXY);
-                        net_write_int8(peer_id);
-                        net_write_int8(CMD_BROADCAST);
                         net_write_data(buf, len);
-                        net_send(&link_addr);
+
+                        LIST_FOREACH (clients, client_to)
+                        {
+                            /* hack: sending all broadcasts to unknown clients so the welcome bot gets connects, can also be used to monitor cncnet */
+                            if (client_to != client && (client_to->game == client->game || client_to->game == GAME_UNKNOWN))
+                            {
+                                net_send_noflush(&client_to->addr);
+                            }
+                        }
+
+                        net_send_discard();
                     }
                 }
-                else if (cmd != peer_id)
+                else
+                /* direct */
                 {
-                    cd = (client_data *)*net_peer_data(cmd);
-
-                    if (cd && cd->link_id != UINT8_MAX)
+                    if (client->last_packet == 0)
                     {
-                        net_write_int8(CMD_CONTROL);
-                        net_write_int8(CTL_PROXY);
-                        net_write_int8(peer_id);
-                        net_write_int8(cd->link_id);
-                        net_write_data(buf, len);
-                        net_send(&link_addr);
+                        log_printf("%s:%d connected with direct packet, possibly a desync\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
+                    }
+
+                    Client *tmp;
+                    LIST_FOREACH (clients, tmp)
+                    {
+                        if (tmp->addr.sin_addr.s_addr == to_ip && tmp->addr.sin_port == to_port)
+                        {
+                            client_to = tmp;
+                            break;
+                        }
+                    }
+
+                    if (client_to == NULL)
+                    {
+                        log_printf("%s:%d tried to send to unknown client %s:%d\n", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), inet_ntoa(*(struct in_addr *)&to_ip), ntohs(to_port));
                     }
                     else
                     {
-                        struct sockaddr_in *to = net_peer_get(cmd);
-                        if (to)
-                        {
-                            net_write_int8(peer_id);
-                            net_write_data(buf, len);
-                            net_send(to);
-                        }
+                        net_write_int8(cmd);
+                        net_write_int32(peer.sin_addr.s_addr);
+                        net_write_int16(peer.sin_port);
+                        net_write_data(buf, len);
+                        net_send(&client_to->addr);
+                    }
+                }
+
+                client->last_packet = now;
+                client->ping_count = 0;
+            }
+
+            /* check for timeouts */
+            LIST_FOREACH (clients, client)
+            {
+                if (now - client->last_packet > config.timeout)
+                {
+                    if (now - client->last_ping > 5 && client->ping_count > 2)
+                    {
+                        log_printf("%s:%d timed out\n", inet_ntoa(client->addr.sin_addr), ntohs(client->addr.sin_port));
+                        LIST_REMOVE(clients, client);
+                        FREE(client);
+                    }
+                    else if (now - client->last_ping > 5)
+                    {
+                        net_write_int8(CMD_PING);
+                        net_write_int32(client->ping_count);
+                        net_send(&client->addr);
+                        client->last_ping = now;
+                        client->ping_count++;
                     }
                 }
             }
@@ -576,6 +477,8 @@ int main(int argc, char **argv)
     }
 
     printf("\n");
+
+    LIST_FREE(clients);
 
     net_free();
     return 0;

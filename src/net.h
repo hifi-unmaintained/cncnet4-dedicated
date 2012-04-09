@@ -30,27 +30,7 @@
 #include <stdint.h>
 #include <unistd.h>
 
-#define NET_BUF_SIZE 1024
-#define MAX_PEERS UINT8_MAX-2
-
-enum
-{
-    /* to dedicated from clients and control sources */
-    /* 0x00 - 0xFD = clients */
-    CMD_CONTROL     = 0xFE,
-    CMD_BROADCAST   = 0xFF
-};
-
-enum
-{
-    /* to dedicated from anywhere */
-    CTL_PING                = 0x00,
-    CTL_QUERY               = 0x01,
-    CTL_RESET               = 0x02,
-    CTL_DISCONNECT          = 0x03,
-    CTL_PROXY               = 0x04,
-    CTL_PROXY_DISCONNECT    = 0x05
-};
+#define NET_BUF_SIZE 2048
 
 int net_reuse(uint16_t sock);
 int net_address(struct sockaddr_in *addr, const char *host, uint16_t port);
@@ -69,6 +49,8 @@ int net_read_data(void *, size_t);
 int net_read_string(char *str, size_t len);
 
 int net_write_int8(int8_t);
+int net_write_int16(int16_t);
+int net_write_int32(int32_t);
 int net_write_data(void *, size_t);
 int net_write_string(char *str);
 int net_write_string_int32(int32_t);

@@ -24,7 +24,6 @@
 #include <string.h>
 
 static struct sockaddr_in net_local;
-static struct sockaddr_in net_peers[MAX_PEERS];
 static uint8_t net_ibuf[NET_BUF_SIZE];
 static uint8_t net_obuf[NET_BUF_SIZE];
 static uint32_t net_ipos;
@@ -75,7 +74,6 @@ int net_init()
     WSADATA wsaData;
     WSAStartup(0x0101, &wsaData);
 #endif
-    memset(net_peers, 0, sizeof(net_peers));
     net_socket = socket(AF_INET, SOCK_DGRAM, 0);
     return net_socket;
 }
@@ -111,7 +109,8 @@ uint32_t net_read_size()
 int8_t net_read_int8()
 {
     int8_t tmp;
-    assert(net_ipos + 1 <= net_ilen);
+    if (net_ipos + 1 > net_ilen)
+        return 0;
     memcpy(&tmp, net_ibuf + net_ipos, 1);
     net_ipos += 1;
     return tmp;
@@ -120,7 +119,8 @@ int8_t net_read_int8()
 int16_t net_read_int16()
 {
     int16_t tmp;
-    assert(net_ipos + 2 <= net_ilen);
+    if (net_ipos + 2 > net_ilen)
+        return 0;
     memcpy(&tmp, net_ibuf + net_ipos, 2);
     net_ipos += 2;
     return tmp;
@@ -129,7 +129,8 @@ int16_t net_read_int16()
 int32_t net_read_int32()
 {
     int32_t tmp;
-    assert(net_ipos + 4 <= net_ilen);
+    if (net_ipos + 4 > net_ilen)
+        return 0;
     memcpy(&tmp, net_ibuf + net_ipos, 4);
     net_ipos += 4;
     return tmp;
@@ -238,115 +239,4 @@ int net_send_noflush(struct sockaddr_in *dst)
 void net_send_discard()
 {
     net_opos = 0;
-}
-
-uint8_t net_peer_get_by_addr(struct sockaddr_in *peer)
-{
-    uint8_t i;
-
-    for (i = 0; i < MAX_PEERS-1; i++)
-    {
-        if (net_peers[i].sin_family && net_peers[i].sin_addr.s_addr == peer->sin_addr.s_addr && net_peers[i].sin_port == peer->sin_port)
-        {
-            return i;
-        }
-    }
-
-    return UINT8_MAX;
-}
-
-uint8_t net_peer_add(struct sockaddr_in *peer)
-{
-    uint8_t i;
-
-    /* add to peers list if not */
-    for (i = 0; i < MAX_PEERS-1; i++)
-    {
-        if (net_peers[i].sin_family == 0)
-        {
-            log_printf("Client %s:%d connected as %d\n", inet_ntoa(peer->sin_addr), ntohs(peer->sin_port), i);
-            memcpy(&net_peers[i], peer, sizeof(struct sockaddr_in));
-            return i;
-        }
-    }
-
-    return UINT8_MAX;
-}
-
-struct sockaddr_in *net_peer_get(uint8_t index)
-{
-    if (index > MAX_PEERS-1)
-    {
-        return NULL;
-    }
-
-    return net_peers[index].sin_family ? &net_peers[index] : NULL;
-}
-
-void net_peer_remove(uint8_t index)
-{
-    log_printf("Client %s:%d disconnected\n", inet_ntoa(net_peers[index].sin_addr), ntohs(net_peers[index].sin_port));
-
-    if (*net_peer_data(index))
-    {
-        free((void *)*net_peer_data(index));
-    }
-
-    memset(&net_peers[index], 0, sizeof(net_peers[index]));
-}
-
-void net_peer_remove_by_addr(struct sockaddr_in *peer)
-{
-    uint8_t i;
-
-    /* check if already exists */
-    for (i = 0; i < MAX_PEERS-1; i++)
-    {
-        if (net_peers[i].sin_family && net_peers[i].sin_addr.s_addr == peer->sin_addr.s_addr && net_peers[i].sin_port == peer->sin_port)
-        {
-            net_peer_remove(i);
-        }
-    }
-}
-
-uint8_t net_peer_count()
-{
-    uint8_t i, count = 0;
-
-    for (i = 0; i < MAX_PEERS-1; i++)
-    {
-        if (net_peers[i].sin_family != 0)
-        {
-            count++;
-        }
-    }
-
-    return count;
-}
-
-intptr_t *net_peer_data(uint8_t index)
-{
-    /* abusing system structures, fuck yeah \,,/ */
-    return (intptr_t *)net_peers[index].sin_zero;
-}
-
-void net_peer_reset()
-{
-    printf("Peers reseted\n");
-    memset(net_peers, 0, sizeof(net_peers));
-}
-
-void net_broadcast(int from)
-{
-    int i;
-
-    for (i = 0; i < MAX_PEERS; i++)
-    {
-        if (i != from && net_peers[i].sin_family == AF_INET)
-        {
-            net_send_noflush(&net_peers[i]);
-        }
-    }
-
-    net_send_discard();
 }
