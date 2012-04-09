@@ -280,6 +280,7 @@ int main(int argc, char **argv)
                     net_write_string_int32(cnt[GAME_RA2]);
 
                     net_send(&peer);
+                    total_packets++;
                     continue;
                 }
 
@@ -409,6 +410,7 @@ int main(int argc, char **argv)
                             if (client_to != client && (client_to->game == client->game || client_to->game == GAME_UNKNOWN))
                             {
                                 net_send_noflush(&client_to->addr);
+                                total_packets++;
                             }
                         }
 
@@ -444,6 +446,7 @@ int main(int argc, char **argv)
                         net_write_int16(peer.sin_port);
                         net_write_data(buf, len);
                         net_send(&client_to->addr);
+                        total_packets++;
                     }
                 }
 
@@ -469,6 +472,7 @@ int main(int argc, char **argv)
                         net_send(&client->addr);
                         client->last_ping = now;
                         client->ping_count++;
+                        total_packets++;
                     }
                 }
             }
