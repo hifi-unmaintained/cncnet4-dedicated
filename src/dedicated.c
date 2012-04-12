@@ -58,7 +58,8 @@ enum
     CMD_P2P,        /* 1 */
     CMD_DISCONNECT, /* 2 */
     CMD_PING,       /* 3 */
-    CMD_QUERY       /* 4 */
+    CMD_QUERY,      /* 4 */
+    CMD_TESTP2P     /* 5 */
 };
 
 typedef struct Client
@@ -279,6 +280,17 @@ int main(int argc, char **argv)
                     net_write_string_int32(cnt[GAME_TSTI]);
                     net_write_string("ra2");
                     net_write_string_int32(cnt[GAME_RA2]);
+
+                    net_send(&peer);
+                    total_packets++;
+                    continue;
+                }
+
+                if (cmd == CMD_TESTP2P)
+                {
+                    net_write_int8(CMD_TESTP2P);
+                    net_write_int32(net_read_int32());
+                    peer.sin_port = htons(8054);
 
                     net_send(&peer);
                     total_packets++;
